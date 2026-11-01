@@ -14,6 +14,12 @@ router.get("/instructor", authMiddleware, authorizeRoles("INSTRUCTOR", "ADMIN"),
     const enrolledStudents = courseIds.length
       ? (await Enrollment.distinct("user", { course: { $in: courseIds } })).length
       : 0;
+    const enrollments = courseIds.length
+      ? await Enrollment.find({ course: { $in: courseIds } })
+        .populate("user", "name email")
+        .populate("course", "title")
+        .sort({ createdAt: -1 })
+      : [];
     return res.status(200).json({
       success: true,
       data: {
@@ -22,6 +28,14 @@ router.get("/instructor", authMiddleware, authorizeRoles("INSTRUCTOR", "ADMIN"),
         draftCourses: courses.filter((course) => !course.published).length,
         enrolledStudents,
         courses,
+        students: enrollments
+          .filter((enrollment) => enrollment.user && enrollment.course)
+          .map((enrollment) => ({
+            id: enrollment._id,
+            user: enrollment.user,
+            course: enrollment.course,
+            enrolledAt: enrollment.createdAt,
+          })),
       },
     });
   } catch (error) {

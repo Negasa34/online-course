@@ -11,12 +11,16 @@ const User = require("../models/user");
 const Course = require("../models/courses");
 const Enrollment = require("../models/enrollment");
 const InstructorApplication = require("../models/instructorApplication");
+const CourseSection = require("../models/courseSection");
+const LessonProgress = require("../models/lessonProgress");
 const errorHandler = require("../middleware/errorHandler");
 
 const users = new Map();
 const courses = new Map();
 const enrollments = new Map();
 const applications = new Map();
+const sections = new Map();
+const lessonProgress = new Map();
 let nextId = 1;
 let httpServer;
 let baseUrl;
@@ -145,6 +149,7 @@ before(async () => {
   };
   User.find = (filter = {}) => {
     let matching = [...users.values()];
+    if (filter.role) matching = matching.filter((user) => user.role === filter.role);
     if (filter.$or) {
       matching = matching.filter((user) => filter.$or.some((condition) => {
         const field = Object.keys(condition)[0];
@@ -197,6 +202,25 @@ before(async () => {
     (filter.published === undefined || course.published === filter.published) &&
     (!filter.instructor || String(course.instructor) === String(filter.instructor))
   )).length;
+  CourseSection.find = (filter = {}) => {
+    const matching = [...sections.values()].filter((section) =>
+      String(section.course) === String(filter.course)
+    );
+    return {
+      sort() { return this; },
+      then(resolve, reject) { return Promise.resolve(matching).then(resolve, reject); },
+    };
+  };
+  CourseSection.deleteMany = async (filter = {}) => {
+    for (const [id, section] of sections) {
+      if (String(section.course) === String(filter.course)) sections.delete(id);
+    }
+  };
+  LessonProgress.deleteMany = async (filter = {}) => {
+    for (const [id, progress] of lessonProgress) {
+      if (String(progress.course) === String(filter.course)) lessonProgress.delete(id);
+    }
+  };
   Enrollment.findOne = async (filter) => (
     [...enrollments.values()].find(
       (enrollment) =>
@@ -223,16 +247,28 @@ before(async () => {
   };
   Enrollment.find = (filter) => {
     const query = {
-      populate() {
+      populate(field) {
+        this.populateFields ||= [];
+        this.populateFields.push(field);
         return this;
       },
-      sort: async () => [...enrollments.values()]
-        .filter((enrollment) => enrollment.user === filter.user)
-        .map((enrollment) => ({
-          ...enrollment,
-          course: courses.get(enrollment.course),
-        }))
-        .sort((left, right) => right.createdAt - left.createdAt),
+      sort() {
+        return this;
+      },
+      then(resolve, reject) {
+        const matching = [...enrollments.values()].filter((enrollment) => (
+          filter.user
+            ? enrollment.user === filter.user
+            : filter.course?.$in?.some((id) => String(id) === enrollment.course)
+        ))
+          .map((enrollment) => ({
+            ...enrollment,
+            ...(this.populateFields?.includes("course") ? { course: courses.get(enrollment.course) } : {}),
+            ...(this.populateFields?.includes("user") ? { user: [...users.values()].find((user) => user._id === enrollment.user) } : {}),
+          }))
+          .sort((left, right) => right.createdAt - left.createdAt);
+        return Promise.resolve(matching).then(resolve, reject);
+      },
     };
     return query;
   };
@@ -564,6 +600,11 @@ test("auth, course CRUD, RBAC, validation, CORS, and safe errors", async () => {
   assert.equal(reviewedApplication.response.status, 200);
   assert.equal(applicant.role, "INSTRUCTOR");
   assert.equal(applicant.professionalTitle, "Frontend educator");
+  const refreshedApplicant = await request("/api/auth/me", {
+    headers: { Authorization: `Bearer ${applicantToken}` },
+  });
+  assert.equal(refreshedApplicant.response.status, 200);
+  assert.equal(refreshedApplicant.body.data.role, "INSTRUCTOR");
   const approvedCourse = await request(
     "/api/courses",
     jsonOptions("POST", {
@@ -583,6 +624,30 @@ test("auth, course CRUD, RBAC, validation, CORS, and safe errors", async () => {
   assert.equal((await request("/api/admin/users?page=1&limit=10", { headers: { Authorization: `Bearer ${adminToken}` } })).response.status, 200);
   assert.equal((await request("/api/dashboards/instructor", { headers: { Authorization: `Bearer ${applicantToken}` } })).response.status, 200);
   assert.equal((await request("/api/dashboards/student", { headers: { Authorization: `Bearer ${studentToken}` } })).response.status, 200);
+
+  assert.equal(
+    (await request("/api/admin/dashboard", {
+      headers: { Authorization: `Bearer ${instructorToken}` },
+    })).response.status,
+    403
+  );
+  assert.equal(
+    (await request("/api/dashboards/student", {
+      headers: { Authorization: `Bearer ${instructorToken}` },
+    })).response.status,
+    403
+  );
+
+  const studentUsers = await request("/api/admin/users?role=STUDENT", {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  assert.equal(studentUsers.response.status, 200);
+  assert.ok(studentUsers.body.data.every((user) => user.role === "STUDENT"));
+
+  const invalidRoleFilter = await request("/api/admin/users?role=ADMIN", {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  assert.equal(invalidRoleFilter.response.status, 400);
 
   const rejectedApplication = await request(
     "/api/instructor-applications",
@@ -607,6 +672,18 @@ test("auth, course CRUD, RBAC, validation, CORS, and safe errors", async () => {
   );
   assert.equal(rejected.response.status, 200);
   assert.equal(users.get("applicant-two@example.test").role, "STUDENT");
+  const resubmission = await request(
+    "/api/instructor-applications/me",
+    jsonOptions("POST", {
+      professionalTitle: "Updated design educator",
+      biography: "I teach practical design methods for accessible digital experiences.",
+      expertise: ["Design systems"],
+      teachingExperience: "I have taught design workshops for several years.",
+      qualifications: ["Design degree"],
+      portfolioLinks: [],
+    }, rejectedApplication.body.token)
+  );
+  assert.equal(resubmission.response.status, 409);
   const adminApplicationId = newId();
   applications.set(adminApplicationId, { _id: adminApplicationId, user: admin._id, status: "PENDING" });
   assert.equal(
@@ -741,6 +818,13 @@ test("auth, course CRUD, RBAC, validation, CORS, and safe errors", async () => {
   assert.equal(myCourses.response.status, 200);
   assert.equal(myCourses.body.count, 1);
   assert.equal(myCourses.body.data[0].course._id, courseId);
+  const instructorDashboard = await request("/api/dashboards/instructor", {
+    headers: { Authorization: `Bearer ${instructorToken}` },
+  });
+  assert.equal(instructorDashboard.response.status, 200);
+  assert.equal(instructorDashboard.body.data.students.length, 1);
+  assert.equal(instructorDashboard.body.data.students[0].user.email, "student@example.test");
+  assert.equal(instructorDashboard.body.data.students[0].course.title, "Published Course");
   const otherUsersCourses = await request("/api/enrollments/my-courses", {
     headers: { Authorization: "Bearer " + otherInstructorToken },
   });

@@ -178,9 +178,16 @@ router.get("/users", async (req, res) => {
   const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
   const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 20));
   const search = typeof req.query.search === "string" ? req.query.search.trim().slice(0, 100) : "";
-  const filter = search
-    ? { $or: ["name", "email"].map((field) => ({ [field]: new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") })) }
-    : {};
+  const role = req.query.role;
+  if (role && !["STUDENT", "INSTRUCTOR"].includes(role)) {
+    return res.status(400).json({ success: false, message: "Invalid user role filter" });
+  }
+  const filter = {
+    ...(role ? { role } : {}),
+    ...(search
+      ? { $or: ["name", "email"].map((field) => ({ [field]: new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") })) }
+      : {}),
+  };
   try {
     const [users, total] = await Promise.all([
       User.find(filter)

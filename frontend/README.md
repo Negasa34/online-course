@@ -31,6 +31,8 @@ Do not place backend secrets in the frontend environment. The backend must allow
 - `GET/PATCH /api/users/me` reads and updates the authenticated user's allowed profile fields; `PATCH /api/users/me/password` changes the password after current-password verification.
 - `POST /api/instructor-applications` creates a student account and pending instructor application; `GET /api/instructor-applications/me` reads the signed-in user's application.
 - Admin APIs at `/api/admin` provide dashboard counts, paginated users/applications, application review, and account activation/deactivation. Role dashboards are at `/api/dashboards/instructor` and `/api/dashboards/student`.
+- Instructor and administrator curriculum tools use `/api/curriculum/courses/:courseId/sections` to manage ordered sections and lessons. The student player uses `/api/curriculum/courses/:courseId/learning`; enrolled-student progress and resume data are available at `/api/curriculum/my-progress`.
+- Video uploads are sent as authenticated multipart requests to the backend and stored as authenticated Cloudinary video assets. Configure `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` in the backend `.env` file. `CLOUDINARY_FOLDER` is optional. Never add Cloudinary credentials to frontend environment variables. Uploads accept MP4, MOV, or WebM files up to 500 MB.
 
 To bootstrap or restore an administrator, create the account through ordinary registration, then run `npm run bootstrap-admin -- your-email@example.com` from the project root and confirm the exact prompt. The command only runs when no active administrator exists.
 
@@ -38,4 +40,4 @@ To bootstrap or restore an administrator, create the account through ordinary re
 
 Backend startup explicitly ensures the unique enrollment and instructor-application indexes. If existing enrollment data contains duplicate user/course pairs, remove or reconcile those duplicates before restarting so MongoDB can create the unique index.
 
-The API does not currently expose a private or instructor-owned course-list endpoint. Accordingly, the management view can list courses returned by the public catalog and courses created during the current browser session; the backend still verifies ownership on each edit and delete.
+The instructor dashboard lists the signed-in instructor's courses, and the backend verifies ownership before any course or curriculum change.

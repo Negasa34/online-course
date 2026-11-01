@@ -208,6 +208,7 @@ async function login(req, res) {
         name: user.name,
         email: user.email,
         role: user.role,
+        instructorApprovedAt: user.instructorApprovedAt || null,
         profileImage: user.profileImage || "",
         accountStatus: user.accountStatus || "ACTIVE",
         createdAt: user.createdAt,

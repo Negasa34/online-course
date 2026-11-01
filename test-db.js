@@ -4,15 +4,23 @@ const mongoose = require("mongoose");
 
 async function testConnection() {
   try {
-    await mongoose.connect(process.env.MONGODB_URI);
+    console.log("Connecting to MongoDB...");
 
-    console.log("MongoDB Atlas connected successfully!");
+    await mongoose.connect(process.env.MONGODB_URI, {
+      dbName: process.env.MONGODB_DB_NAME || "olinecourse",
+      serverSelectionTimeoutMS: 10000,
+    });
+
+    console.log("MongoDB Connected Successfully!");
 
     await mongoose.disconnect();
-    console.log("Connection closed.");
+    process.exit(0);
   } catch (error) {
-    console.error("MongoDB connection failed:", error.message);
-    process.exitCode = 1;
+    console.error("MongoDB Connection Failed:");
+    console.error(error.name);
+    console.error(error.message);
+
+    process.exit(1);
   }
 }
 

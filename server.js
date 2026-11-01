@@ -6,7 +6,11 @@ require("dotenv").config({ path: path.resolve(__dirname, ".env") });
 const express = require("express");
 const mongoose = require("mongoose");
 const Course = require("./models/courses");
+const CourseSection = require("./models/courseSection");
+const LessonProgress = require("./models/lessonProgress");
+const { deleteVideo } = require("./services/cloudinaryStorage");
 const authRoutes = require("./routes/autoRoutes");
+const curriculumRoutes = require("./routes/curriculumRoutes");
 const enrollmentRoutes = require("./routes/enrollmentRoutes");
 const userRoutes = require("./routes/userRoutes");
 const instructorApplicationRoutes = require("./routes/instructorApplicationRoutes");
@@ -46,7 +50,7 @@ app.use((req, res, next) => {
   }
 
   if (req.method === "OPTIONS") {
-    res.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+    res.set("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS");
     res.set("Access-Control-Allow-Headers", "Authorization,Content-Type");
     return res.sendStatus(204);
   }
@@ -61,6 +65,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/instructor-applications", instructorApplicationRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/dashboards", dashboardRoutes);
+app.use("/api/curriculum", curriculumRoutes);
 
 // MongoDB connection status
 app.get("/api/health", (req, res) => {
@@ -336,6 +341,15 @@ app.delete(
   async (req, res) => {
     try {
       const course = req.course;
+      const sections = await CourseSection.find({ course: course._id });
+      const videoIds = sections.flatMap((section) =>
+        section.lessons.map((lesson) => lesson.video?.publicId).filter(Boolean)
+      );
+      await Promise.all(videoIds.map(deleteVideo));
+      await Promise.all([
+        CourseSection.deleteMany({ course: course._id }),
+        LessonProgress.deleteMany({ course: course._id }),
+      ]);
       await course.deleteOne();
 
       res.status(200).json({
@@ -371,11 +385,16 @@ async function startServer() {
       throw new Error("JWT_SECRET must be configured with at least 32 characters");
     }
 
-    await mongoose.connect(process.env.MONGODB_URI);
-    console.log("MongoDB Atlas connected successfully");
+    await mongoose.connect(process.env.MONGODB_URI, {
+      dbName: process.env.MONGODB_DB_NAME || "olinecourse",
+      serverSelectionTimeoutMS: 15000,
+    });
+    console.log(`MongoDB connected (${mongoose.connection.name})`);
     await Promise.all([
       Enrollment.createIndexes(),
       InstructorApplication.createIndexes(),
+      CourseSection.createIndexes(),
+      LessonProgress.createIndexes(),
     ]);
 
     app.listen(PORT, () => {

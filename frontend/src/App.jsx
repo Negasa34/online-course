@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
+import { InstructorCourseBuilder, StudentLearning } from './CourseContent'
 
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/$/, '')
 const TOKEN_KEY = 'learnhub_token'
@@ -54,12 +55,77 @@ function formatPrice(price) {
 
 function routeFromHash() {
   const path = window.location.hash.slice(1) || '/'
-  const match = path.match(/^\/courses\/([^/]+)$/)
-  return match ? { page: 'course', id: decodeURIComponent(match[1]) } : { page: path.slice(1) || 'home' }
+  const courseMatch = path.match(/^\/courses\/([^/]+)$/)
+  if (courseMatch) return { page: 'course', id: decodeURIComponent(courseMatch[1]) }
+  const curriculumMatch = path.match(/^\/curriculum\/([^/]+)$/)
+  if (curriculumMatch) return { page: 'curriculum', courseId: decodeURIComponent(curriculumMatch[1]) }
+  const learningMatch = path.match(/^\/learn\/([^/]+)(?:\/([^/]+))?$/)
+  if (learningMatch) {
+    return {
+      page: 'learn',
+      courseId: decodeURIComponent(learningMatch[1]),
+      lessonId: learningMatch[2] ? decodeURIComponent(learningMatch[2]) : '',
+    }
+  }
+  return { page: path.slice(1) || 'home' }
 }
 
 function navigate(path) {
   window.location.hash = path
+}
+
+function getDashboardPath(user) {
+  return user?.role === 'ADMIN' ? '/admin' : '/dashboard'
+}
+
+function resolveRoleRoute(page, user) {
+  const protectedPages = ['dashboard', 'my-courses', 'profile', 'settings', 'admin', 'curriculum']
+  if (!user && protectedPages.includes(page)) return { page: 'login', redirect: '/login' }
+  if (!user) return { page }
+
+  if (page === 'login' || page === 'register') {
+    const destination = getDashboardPath(user)
+    return { page: user.role === 'ADMIN' ? 'admin' : 'dashboard', redirect: destination }
+  }
+  if (page === 'admin' && user.role !== 'ADMIN') return { page: 'dashboard', redirect: '/dashboard' }
+  if (page === 'dashboard' && user.role === 'ADMIN') return { page: 'admin', redirect: '/admin' }
+  if (page === 'curriculum' && user.role === 'STUDENT') return { page: 'dashboard', redirect: '/dashboard' }
+  if (page === 'curriculum' && user.role === 'INSTRUCTOR' && !user.instructorApprovedAt) {
+    return { page: 'dashboard', redirect: '/dashboard' }
+  }
+  if (page === 'instructor-apply' && (user.role === 'ADMIN' || (user.role === 'INSTRUCTOR' && user.instructorApprovedAt))) {
+    const destination = getDashboardPath(user)
+    return { page: user.role === 'ADMIN' ? 'admin' : 'dashboard', redirect: destination }
+  }
+  return { page }
+}
+
+function getAccountNavigation(user, page) {
+  if (user?.role === 'STUDENT') {
+    return [
+      { label: 'My Courses', href: '#/my-courses', icon: 'courses', current: page === 'my-courses' },
+      { label: 'Profile', href: '#/profile', icon: 'profile', current: page === 'profile' },
+      { label: 'Settings', href: '#/settings', icon: 'settings', current: page === 'settings' },
+      { label: 'Become an Instructor', href: '#/instructor-apply', icon: 'teach', current: page === 'instructor-apply' },
+    ]
+  }
+  if (user?.role === 'INSTRUCTOR') {
+    return [
+      { label: 'Instructor Dashboard', href: '#/dashboard', icon: 'dashboard', current: page === 'dashboard' },
+      { label: 'My Courses', href: '#/my-courses', icon: 'courses', current: page === 'my-courses' },
+      { label: 'Profile', href: '#/profile', icon: 'profile', current: page === 'profile' },
+      { label: 'Settings', href: '#/settings', icon: 'settings', current: page === 'settings' },
+      ...(!user.instructorApprovedAt ? [{ label: 'Become an Instructor', href: '#/instructor-apply', icon: 'teach', current: page === 'instructor-apply' }] : []),
+    ]
+  }
+  if (user?.role === 'ADMIN') {
+    return [
+      { label: 'Admin Dashboard', href: '#/admin', icon: 'admin', current: page === 'admin' },
+      { label: 'Profile', href: '#/profile', icon: 'profile', current: page === 'profile' },
+      { label: 'Settings', href: '#/settings', icon: 'settings', current: page === 'settings' },
+    ]
+  }
+  return []
 }
 
 function Brand() {
@@ -185,27 +251,7 @@ function Header({ user, onLogout, page, searchValue, onSearch, onSearchSubmit })
     setMenuOpen(false)
   }
 
-  const accountLinks = user?.role === 'STUDENT'
-    ? [
-      { label: 'My Courses', href: '#/my-courses', icon: 'courses', current: page === 'my-courses' },
-      { label: 'Profile', href: '#/profile', icon: 'profile', current: page === 'profile' },
-      { label: 'Settings', href: '#/settings', icon: 'settings', current: page === 'settings' },
-      { label: 'Teach', href: '#/instructor-apply', icon: 'teach', current: page === 'instructor-apply' },
-    ]
-    : user?.role === 'INSTRUCTOR'
-      ? [
-        { label: 'My Courses', href: '#/my-courses', icon: 'courses', current: page === 'my-courses' },
-        { label: 'Profile', href: '#/profile', icon: 'profile', current: page === 'profile' },
-        { label: 'Settings', href: '#/settings', icon: 'settings', current: page === 'settings' },
-        { label: 'Instructor Dashboard', href: '#/dashboard', icon: 'dashboard', current: page === 'dashboard' },
-      ]
-      : user?.role === 'ADMIN'
-        ? [
-          { label: 'Profile', href: '#/profile', icon: 'profile', current: page === 'profile' },
-          { label: 'Settings', href: '#/settings', icon: 'settings', current: page === 'settings' },
-          { label: 'Admin Dashboard', href: '#/admin', icon: 'admin', current: page === 'admin' },
-        ]
-        : []
+  const accountLinks = getAccountNavigation(user, page)
 
   return (
     <header className={`site-header${scrolled ? ' is-scrolled' : ''}`}>
@@ -539,14 +585,38 @@ function AuthPage({ mode, onSubmit, error, loading }) {
   )
 }
 
-function InstructorApplicationPage({ onSubmit, loading, error, user }) {
+function InstructorApplicationPage({ onSubmit, loading, error, user, token }) {
   const [form, setForm] = useState({
     name: user?.name || '', email: user?.email || '', profileImage: user?.profileImage || '', professionalTitle: '', biography: user?.bio || '',
     expertise: '', teachingExperience: '', qualifications: '', portfolioLinks: '',
     password: '', confirmPassword: '', termsAccepted: Boolean(user),
   })
   const [validationError, setValidationError] = useState('')
+  const [existingApplication, setExistingApplication] = useState(null)
+  const [applicationState, setApplicationState] = useState({ loading: Boolean(user), error: '' })
   const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }))
+
+  useEffect(() => {
+    if (!user) {
+      return undefined
+    }
+
+    let active = true
+    apiRequest('/instructor-applications/me', { token })
+      .then((result) => {
+        if (active) setExistingApplication(result.data)
+      })
+      .catch((requestError) => {
+        if (active && requestError.status !== 404) {
+          setApplicationState({ loading: false, error: requestError.message })
+          return
+        }
+      })
+      .finally(() => {
+        if (active) setApplicationState((current) => ({ ...current, loading: false }))
+      })
+    return () => { active = false }
+  }, [token, user])
 
   async function submit(event) {
     event.preventDefault()
@@ -583,6 +653,21 @@ function InstructorApplicationPage({ onSubmit, loading, error, user }) {
         <h1>Share what<br /><span>you know.</span></h1>
         <p>Apply to teach. Your account stays a student account until an administrator approves your application.</p>
       </section>
+      {applicationState.loading && <div className="state-card" role="status"><span className="spinner" /> Checking your application…</div>}
+      {applicationState.error && <div className="form-alert" role="alert">{applicationState.error}</div>}
+      {existingApplication ? (
+        <section className="application-status-card">
+          <span className="role-badge">INSTRUCTOR APPLICATION · {existingApplication.status}</span>
+          <p>
+            {existingApplication.status === 'PENDING'
+              ? 'Administrator approval is required before instructor access is granted.'
+              : existingApplication.status === 'APPROVED'
+                ? 'Your application was approved. Your account now has instructor access.'
+                : 'Your application was rejected. The current application policy does not allow resubmission; contact an administrator for assistance.'}
+          </p>
+          {existingApplication.reviewNote && <p><strong>Administrator note:</strong> {existingApplication.reviewNote}</p>}
+        </section>
+      ) : !applicationState.loading && !applicationState.error && (
       <form className="account-form section" onSubmit={submit}>
         {(validationError || error) && <div className="form-alert" role="alert">{validationError || error}</div>}
         <div className="account-form-grid">
@@ -604,6 +689,7 @@ function InstructorApplicationPage({ onSubmit, loading, error, user }) {
         <button className="button button-dark auth-submit" disabled={loading}>{loading ? 'Submitting…' : 'Submit instructor application'} <span aria-hidden="true">↗</span></button>
         {!user && <p className="auth-switch">Already registered? <a href="#/login">Log in</a></p>}
       </form>
+      )}
     </main>
   )
 }
@@ -708,6 +794,7 @@ function CourseDetail({ id, token, user }) {
             <p className="detail-price">{formatPrice(course.price)}</p>
             <p className="detail-description">{course.description}</p>
             <div className="detail-footer"><span>Learn at your own pace</span><span>Course · {course.slug}</span></div>
+            <a className="button button-outline course-preview-link" href={`#/learn/${encodeURIComponent(id)}`}>Preview curriculum <span aria-hidden="true">↗</span></a>
             <div className="enrollment-actions">
               {!user ? (
                 <p>Log in to enroll in this course. <a className="text-link" href="#/login">Log in <span aria-hidden="true">→</span></a></p>
@@ -721,7 +808,7 @@ function CourseDetail({ id, token, user }) {
               ) : enrollment.enrolled ? (
                 <div className="enrollment-feedback" role="status">
                   <strong>{enrollment.message || 'Already Enrolled'}</strong>
-                  <a className="button button-dark" href="#/my-courses">Continue Learning <span aria-hidden="true">↗</span></a>
+                  <a className="button button-dark" href={`#/learn/${encodeURIComponent(id)}`}>Continue Learning <span aria-hidden="true">↗</span></a>
                 </div>
               ) : (
                 <div className="enrollment-feedback">
@@ -742,13 +829,20 @@ function CourseDetail({ id, token, user }) {
 
 function MyCourses({ token }) {
   const [courses, setCourses] = useState([])
+  const [progress, setProgress] = useState([])
   const [state, setState] = useState({ loading: true, error: '' })
 
   const loadEnrollments = useCallback(async () => {
     try {
-      const result = await apiRequest('/enrollments/my-courses', { token })
-      if (!Array.isArray(result.data)) throw new Error('The server returned an invalid enrollment list.')
+      const [result, progressResult] = await Promise.all([
+        apiRequest('/enrollments/my-courses', { token }),
+        apiRequest('/curriculum/my-progress', { token }),
+      ])
+      if (!Array.isArray(result.data) || !Array.isArray(progressResult.data)) {
+        throw new Error('The server returned invalid course progress.')
+      }
       setCourses(result.data.map((enrollment) => enrollment.course).filter(Boolean))
+      setProgress(progressResult.data)
       setState({ loading: false, error: '' })
     } catch (error) {
       setState({ loading: false, error: error.message })
@@ -776,29 +870,41 @@ function MyCourses({ token }) {
           <div><h2>Enrolled courses</h2><p>Your learning, all in one place.</p></div>
           <a className="text-link" href="#/courses">Browse courses <span aria-hidden="true">→</span></a>
         </div>
-        <CourseCollection
-          courses={courses}
-          loading={state.loading}
-          error={state.error}
-          onRetry={retryEnrollments}
-          emptyTitle="You haven’t enrolled in a course yet"
-          emptyMessage="Explore the catalog and find your next learning opportunity."
-        />
+        {state.loading ? <div className="state-card" role="status"><span className="spinner" /> Loading your courses…</div> : state.error ? (
+          <div className="state-card state-error" role="alert"><strong>Could not load your courses</strong><span>{state.error}</span><button className="button button-outline" onClick={retryEnrollments}>Try again</button></div>
+        ) : courses.length === 0 ? (
+          <div className="state-card"><strong>You haven’t enrolled in a course yet</strong><span>Explore the catalog and find your next learning opportunity.</span><a className="button button-dark" href="#/courses">Browse courses</a></div>
+        ) : (
+          <div className="learning-course-cards">{progress.map((item) => (
+            <article className="learning-course-card" key={item.courseId}>
+              <div><p className="eyebrow">YOUR PROGRESS</p><h3>{item.course.title}</h3><p>{item.completedLessons} of {item.totalLessons} lessons completed</p></div>
+              <progress value={item.percentage} max="100" aria-label={`${item.percentage}% course progress`} />
+              <a className="button button-dark button-small" href={`#/learn/${encodeURIComponent(item.courseId)}${item.lastLessonId ? `/${encodeURIComponent(item.lastLessonId)}` : ''}`}>
+                {item.lastLessonId ? 'Continue learning' : 'Start learning'} <span aria-hidden="true">↗</span>
+              </a>
+            </article>
+          ))}</div>
+        )}
       </section>
     </main>
   )
 }
 
-function StudentDashboard({ user, token, courses }) {
+function StudentDashboard({ user, token, courses, refreshUser }) {
   const [dashboard, setDashboard] = useState(null)
+  const [progress, setProgress] = useState([])
   const [application, setApplication] = useState(null)
   const [state, setState] = useState({ loading: true, error: '' })
 
   const load = useCallback(async () => {
     setState({ loading: true, error: '' })
     try {
-      const result = await apiRequest('/dashboards/student', { token })
+      const [result, progressResult] = await Promise.all([
+        apiRequest('/dashboards/student', { token }),
+        apiRequest('/curriculum/my-progress', { token }),
+      ])
       setDashboard(result.data)
+      setProgress(progressResult.data)
       setState({ loading: false, error: '' })
     } catch (error) {
       setState({ loading: false, error: error.message })
@@ -806,10 +912,11 @@ function StudentDashboard({ user, token, courses }) {
     try {
       const result = await apiRequest('/instructor-applications/me', { token })
       setApplication(result.data)
+      if (result.data.status === 'APPROVED') await refreshUser()
     } catch (error) {
       if (error.status !== 404) setState((current) => ({ ...current, error: error.message }))
     }
-  }, [token])
+  }, [refreshUser, token])
 
   useEffect(() => { Promise.resolve().then(load) }, [load])
   const enrolledCourses = (dashboard?.enrolledCourses || []).map((item) => item.course).filter(Boolean)
@@ -824,7 +931,8 @@ function StudentDashboard({ user, token, courses }) {
       {state.error && <div className="form-alert" role="alert">{state.error}<button className="button button-outline button-small" onClick={load}>Try again</button></div>}
       {application && <div className="application-status-card">
         <span className="role-badge">INSTRUCTOR APPLICATION · {application.status}</span>
-        <p>{application.status === 'PENDING' ? 'Your account remains a student account while your application is reviewed.' : application.status === 'REJECTED' ? 'Your instructor application was not approved.' : 'Your instructor access has been approved. Log out and back in if your current session still shows student access.'}</p>
+        <p>{application.status === 'PENDING' ? 'Administrator approval is required before instructor access is granted.' : application.status === 'REJECTED' ? 'Your application was rejected. The current application policy does not allow resubmission; contact an administrator for assistance.' : 'Your instructor access has been approved.'}</p>
+        {application.reviewNote && <p><strong>Administrator note:</strong> {application.reviewNote}</p>}
       </div>}
       {dashboard && <>
         <section className="account-stat-grid student-stat-grid">
@@ -832,8 +940,14 @@ function StudentDashboard({ user, token, courses }) {
           <article className="account-stat"><span>Account role</span><strong>{user.role}</strong></article>
         </section>
         <section className="section dashboard-section">
-          <div className="catalog-toolbar"><div><h2>Continue learning</h2><p>Your enrolled courses, with progress shown only when course data supports it.</p></div><a className="text-link" href="#/my-courses">View all <span aria-hidden="true">→</span></a></div>
-          <CourseCollection courses={enrolledCourses} loading={false} error="" onRetry={() => {}} emptyTitle="Your learning journey starts here" emptyMessage="Browse the catalog and enroll in a course to see it here." />
+          <div className="catalog-toolbar"><div><h2>Continue learning</h2><p>Pick up from your last lesson and keep making progress.</p></div><a className="text-link" href="#/my-courses">View all <span aria-hidden="true">→</span></a></div>
+          {progress.length ? <div className="learning-course-cards">{progress.slice(0, 3).map((item) => (
+            <article className="learning-course-card" key={item.courseId}>
+              <div><p className="eyebrow">{item.percentage}% COMPLETE</p><h3>{item.course.title}</h3><p>{item.completedLessons} of {item.totalLessons} lessons completed</p></div>
+              <progress value={item.percentage} max="100" aria-label={`${item.percentage}% course progress`} />
+              <a className="button button-dark button-small" href={`#/learn/${encodeURIComponent(item.courseId)}${item.lastLessonId ? `/${encodeURIComponent(item.lastLessonId)}` : ''}`}>Continue learning ↗</a>
+            </article>
+          ))}</div> : <CourseCollection courses={enrolledCourses} loading={false} error="" onRetry={() => {}} emptyTitle="Your learning journey starts here" emptyMessage="Browse the catalog and enroll in a course to see it here." />}
         </section>
         <section className="section dashboard-section">
           <div className="catalog-toolbar"><div><h2>Explore something new</h2><p>Courses chosen for curious minds.</p></div><a className="text-link" href="#/courses">Full catalog <span aria-hidden="true">→</span></a></div>
@@ -990,6 +1104,7 @@ function AdminDashboard({ user, token }) {
   const [users, setUsers] = useState([])
   const [search, setSearch] = useState('')
   const [submittedSearch, setSubmittedSearch] = useState('')
+  const [userRole, setUserRole] = useState('')
   const [page, setPage] = useState(1)
   const [applicationPage, setApplicationPage] = useState(1)
   const [applicationPages, setApplicationPages] = useState(1)
@@ -998,10 +1113,15 @@ function AdminDashboard({ user, token }) {
   const [moderationFilter, setModerationFilter] = useState('')
   const [state, setState] = useState({ loading: true, error: '', message: '' })
 
-  const load = useCallback(async (userPage = page, userSearch = submittedSearch) => {
+  const load = useCallback(async (userPage = page, userSearch = submittedSearch, roleFilter = userRole) => {
     setState({ loading: true, error: '', message: '' })
     try {
-      const query = new URLSearchParams({ page: String(userPage), limit: '10', ...(userSearch ? { search: userSearch } : {}) })
+      const query = new URLSearchParams({
+        page: String(userPage),
+        limit: '10',
+        ...(userSearch ? { search: userSearch } : {}),
+        ...(roleFilter ? { role: roleFilter } : {}),
+      })
       const courseQuery = new URLSearchParams({
         page: String(coursePage),
         limit: '10',
@@ -1027,7 +1147,7 @@ function AdminDashboard({ user, token }) {
     } catch (error) {
       setState({ loading: false, error: error.message, message: '' })
     }
-  }, [applicationPage, coursePage, moderationFilter, page, submittedSearch, token])
+  }, [applicationPage, coursePage, moderationFilter, page, submittedSearch, token, userRole])
 
   useEffect(() => { Promise.resolve().then(() => load(page, submittedSearch)) }, [load, page, submittedSearch])
 
@@ -1120,8 +1240,11 @@ function AdminDashboard({ user, token }) {
         </section>
         <section className="section dashboard-section">
           <div className="catalog-toolbar">
-            <div><h2>User management</h2><p>Role and account state are always enforced by the backend.</p></div>
+            <div><h2>{userRole === 'STUDENT' ? 'Manage Students' : userRole === 'INSTRUCTOR' ? 'Manage Instructors' : 'Manage Students and Instructors'}</h2><p>Role and account state are always enforced by the backend.</p></div>
             <form className="search-field" onSubmit={(event) => { event.preventDefault(); setPage(1); setSubmittedSearch(search) }}>
+              <select value={userRole} onChange={(event) => { setPage(1); setUserRole(event.target.value) }} aria-label="Filter users by role">
+                <option value="">All users</option><option value="STUDENT">Students</option><option value="INSTRUCTOR">Instructors</option>
+              </select>
               <span aria-hidden="true">⌕</span><input aria-label="Search users" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search users" />
               <button type="submit">Search</button>
             </form>
@@ -1152,7 +1275,7 @@ function AdminDashboard({ user, token }) {
           {dashboard && dashboard.moderationCourses?.length ? <div className="management-list">{dashboard.moderationCourses.map((course) => (
             <article className="management-row" key={courseId(course)}>
               <div className="management-copy"><span className="role-badge">{course.published ? 'PUBLISHED' : 'UNPUBLISHED'}</span><h3>{course.title}</h3><p>{course.description}</p><p>Instructor: {course.instructor?.name || 'Not assigned'}</p></div>
-              <div className="management-actions"><button className="button button-outline button-small" onClick={() => togglePublished(course)}>{course.published ? 'Unpublish' : 'Publish'}</button></div>
+              <div className="management-actions"><a className="button button-dark button-small" href={`#/curriculum/${encodeURIComponent(courseId(course))}`}>Manage curriculum</a><button className="button button-outline button-small" onClick={() => togglePublished(course)}>{course.published ? 'Unpublish' : 'Publish'}</button></div>
             </article>
           ))}</div> : <div className="state-card"><strong>No courses found</strong><span>Try a different moderation filter.</span></div>}
           {coursePages > 1 && <div className="form-actions pagination-actions">
@@ -1219,7 +1342,7 @@ function CourseForm({ initialCourse, onSave, onCancel, saving, error }) {
   )
 }
 
-function Dashboard({ user, token, courses, refreshCourses, rememberCourse, removeCourse }) {
+function Dashboard({ user, token, courses, refreshCourses, rememberCourse, removeCourse, refreshUser }) {
   const [editing, setEditing] = useState(null)
   const [formError, setFormError] = useState('')
   const [notice, setNotice] = useState('')
@@ -1283,7 +1406,7 @@ function Dashboard({ user, token, courses, refreshCourses, rememberCourse, remov
   }
 
   if (user.role === 'STUDENT') {
-    return <StudentDashboard user={user} token={token} courses={courses} />
+    return <StudentDashboard user={user} token={token} courses={courses} refreshUser={refreshUser} />
   }
 
   if (user.role === 'INSTRUCTOR' && !user.instructorApprovedAt) {
@@ -1313,13 +1436,13 @@ function Dashboard({ user, token, courses, refreshCourses, rememberCourse, remov
       </>}
       {canManage ? (
         <section className="section dashboard-section">
-          <div className="catalog-toolbar"><div><h2>Your course management</h2><p>Manage your own courses and review current enrollment counts.</p></div><a className="text-link" href="#/profile">Edit instructor profile <span aria-hidden="true">→</span></a></div>
+          <div className="catalog-toolbar"><div><h2>My Courses</h2><p>Manage your own courses and review current enrollment counts.</p></div><a className="text-link" href="#/profile">Edit instructor profile <span aria-hidden="true">→</span></a></div>
           {editing && <CourseForm initialCourse={editing.course} onSave={saveCourse} onCancel={() => setEditing(null)} saving={saving} error={formError} />}
           {instructorState.loading ? <div className="state-card" role="status"><span className="spinner" /> Loading course management…</div> : managedCourses.length === 0 ? <div className="state-card"><strong>No courses to manage yet</strong><span>Create your first course, or check back when one of your courses is published.</span></div> : (
             <div className="management-list">{managedCourses.map((course) => (
               <article className="management-row" key={courseId(course)}>
                 <div className="management-copy"><div className="course-card-top"><span className="course-label">{course.published ? 'PUBLISHED' : 'DRAFT'}</span><span className="course-price">{formatPrice(course.price)}</span></div><h3>{course.title}</h3><p>{course.description}</p></div>
-                <div className="management-actions"><button className="button button-outline button-small" onClick={() => { setEditing({ course }); setFormError('') }}>Edit</button><button className="button button-danger button-small" onClick={() => deleteCourse(course)}>Delete</button></div>
+                <div className="management-actions"><a className="button button-dark button-small" href={`#/curriculum/${encodeURIComponent(courseId(course))}`}>Manage curriculum</a><button className="button button-outline button-small" onClick={() => { setEditing({ course }); setFormError('') }}>Edit</button><button className="button button-danger button-small" onClick={() => deleteCourse(course)}>Delete</button></div>
               </article>
             ))}</div>
           )}
@@ -1327,6 +1450,17 @@ function Dashboard({ user, token, courses, refreshCourses, rememberCourse, remov
       ) : (
         <section className="section dashboard-section"><div className="catalog-toolbar"><div><h2>Explore courses</h2><p>Find a course that fits where you want to go.</p></div><a className="text-link" href="#/courses">Full catalog <span aria-hidden="true">→</span></a></div><CourseCollection courses={courses.slice(0, 3)} loading={false} error="" onRetry={() => {}} /></section>
       )}
+      {user.role === 'INSTRUCTOR' && instructorStats && <section className="section dashboard-section">
+        <div className="catalog-toolbar"><div><h2>Students</h2><p>Learners enrolled in your courses.</p></div></div>
+        {instructorStats.students.length
+          ? <div className="management-list">{instructorStats.students.map((enrollment) => (
+            <article className="management-row" key={enrollment.id}>
+              <div className="management-copy"><h3>{enrollment.user.name}</h3><p>{enrollment.user.email}</p></div>
+              <div className="management-actions"><span className="role-badge">{enrollment.course.title}</span></div>
+            </article>
+          ))}</div>
+          : <div className="state-card"><strong>No students enrolled yet</strong><span>Enrolled learners will appear here.</span></div>}
+      </section>}
     </main>
   )
 }
@@ -1353,13 +1487,7 @@ function Footer({ user }) {
         <nav className="footer-column" aria-label="Account">
           <h2>Account</h2>
           {user ? (
-            <>
-              <a href="#/dashboard">Dashboard</a>
-              <a href="#/my-courses">My Courses</a>
-              <a href="#/profile">Profile</a>
-              <a href="#/settings">Settings</a>
-              <a href="#/courses">Browse courses</a>
-            </>
+            getAccountNavigation(user).map((item) => <a key={item.label} href={item.href}>{item.label}</a>)
           ) : (
             <>
               <a href="#/login">Log in</a>
@@ -1450,6 +1578,12 @@ function App() {
     return () => { active = false }
   }, [token])
 
+  const refreshUser = useCallback(async () => {
+    if (!token) return
+    const result = await apiRequest('/auth/me', { token })
+    setUser(result.data)
+  }, [token])
+
   async function authenticate(path, body) {
     setAuthSubmitting(true)
     setAuthError('')
@@ -1459,7 +1593,7 @@ function App() {
       setToken(result.token)
       setUser(result.data)
       setAuthError('')
-      navigate('/dashboard')
+      navigate(getDashboardPath(result.data))
     } catch (error) {
       setAuthError(error.message)
     } finally {
@@ -1524,15 +1658,9 @@ function App() {
     return [...sessionCourses.filter((course) => !ids.has(courseId(course))), ...courses]
   }, [courses, sessionCourses])
 
-  let page = route.page
-  if ((page === 'dashboard' || page === 'my-courses' || page === 'profile' || page === 'settings' || page === 'admin') && !authLoading && !user) {
-    if (window.location.hash !== '#/login') navigate('/login')
-    page = 'login'
-  }
-  if ((page === 'login' || page === 'register') && user) {
-    if (window.location.hash !== '#/dashboard') navigate('/dashboard')
-    page = 'dashboard'
-  }
+  const roleRoute = !authLoading ? resolveRoleRoute(route.page, user) : { page: route.page }
+  const page = roleRoute.page
+  if (roleRoute.redirect && window.location.hash !== `#${roleRoute.redirect}`) navigate(roleRoute.redirect)
 
   if (authLoading) return <div className="app-loading" role="status"><span className="spinner" /> Restoring your session…</div>
 
@@ -1555,15 +1683,16 @@ function App() {
       {page === 'about' && <AboutPage />}
       {page === 'contact' && <ContactPage />}
       {(page === 'login' || page === 'register') && <AuthPage mode={page} onSubmit={authenticate} error={authError} loading={authSubmitting} />}
-      {page === 'instructor-apply' && <InstructorApplicationPage user={user} onSubmit={submitInstructorApplication} error={authError} loading={authSubmitting} />}
-      {page === 'dashboard' && user && <Dashboard user={user} token={token} courses={allCourses} refreshCourses={loadCourses} rememberCourse={rememberCourse} removeCourse={removeCourse} />}
+      {page === 'instructor-apply' && <InstructorApplicationPage user={user} token={token} onSubmit={submitInstructorApplication} error={authError} loading={authSubmitting} />}
+      {page === 'dashboard' && user && <Dashboard user={user} token={token} courses={allCourses} refreshCourses={loadCourses} rememberCourse={rememberCourse} removeCourse={removeCourse} refreshUser={refreshUser} />}
       {page === 'my-courses' && user && <MyCourses token={token} />}
       {page === 'profile' && user && <AccountPage user={user} token={token} onUserUpdate={setUser} onLogout={logout} />}
       {page === 'settings' && user && <AccountPage user={user} token={token} onUserUpdate={setUser} onLogout={logout} settings />}
       {page === 'admin' && user?.role === 'ADMIN' && <AdminDashboard user={user} token={token} />}
-      {page === 'admin' && user && user.role !== 'ADMIN' && <main className="page-main"><div className="state-card state-error" role="alert"><strong>Administrator access required</strong><span>Your account does not have permission to view this page.</span><a className="text-link" href="#/dashboard">Return to your dashboard</a></div></main>}
       {page === 'course' && <CourseDetail key={route.id} id={route.id} token={token} user={user} />}
-      {!['home', 'courses', 'about', 'contact', 'login', 'register', 'instructor-apply', 'dashboard', 'my-courses', 'profile', 'settings', 'admin', 'course'].includes(page) && <main className="page-main"><div className="state-card"><strong>That page isn’t here.</strong><a className="text-link" href="#/">Back to home →</a></div></main>}
+      {page === 'curriculum' && user && <InstructorCourseBuilder key={route.courseId} courseId={route.courseId} token={token} />}
+      {page === 'learn' && <StudentLearning key={`${route.courseId}:${route.lessonId}`} courseId={route.courseId} lessonId={route.lessonId} token={token} />}
+      {!['home', 'courses', 'about', 'contact', 'login', 'register', 'instructor-apply', 'dashboard', 'my-courses', 'profile', 'settings', 'admin', 'course', 'curriculum', 'learn'].includes(page) && <main className="page-main"><div className="state-card"><strong>That page isn’t here.</strong><a className="text-link" href="#/">Back to home →</a></div></main>}
       <Footer user={user} />
     </div>
   )

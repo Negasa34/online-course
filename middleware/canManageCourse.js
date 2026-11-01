@@ -2,7 +2,14 @@
 const mongoose = require("mongoose");
 const Course = require("../models/courses");
 
-async function canManageCourse(req, res, next) {
+function canManageCourse(parameter = "id", response, next) {
+  if (parameter && typeof parameter === "object" && response && next) {
+    return verifyCoursePermission(parameter, response, next, "id");
+  }
+  return (req, res, next) => verifyCoursePermission(req, res, next, parameter);
+}
+
+async function verifyCoursePermission(req, res, next, parameter) {
   try {
     if (!req.user) {
       return res.status(401).json({
@@ -11,7 +18,7 @@ async function canManageCourse(req, res, next) {
       });
     }
 
-    const { id } = req.params;
+    const id = req.params[parameter];
 
     if (!mongoose.isValidObjectId(id)) {
       return res.status(400).json({
