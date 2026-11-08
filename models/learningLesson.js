@@ -8,6 +8,14 @@ const terminologySchema = new mongoose.Schema(
   { _id: false }
 );
 
+const referenceSchema = new mongoose.Schema(
+  {
+    title: { type: String, required: true, trim: true, maxlength: 160 },
+    url: { type: String, required: true, trim: true, maxlength: 2048 },
+  },
+  { _id: false }
+);
+
 const codeExampleSchema = new mongoose.Schema(
   {
     code: { type: String, required: true, maxlength: 12000 },
@@ -28,6 +36,8 @@ const lessonContentSchema = new mongoose.Schema(
     commonMistakes: { type: [String], required: true, validate: [(items) => items.length >= 2, "At least two common mistakes are required"] },
     bestPractices: { type: [String], required: true, validate: [(items) => items.length >= 2, "At least two best practices are required"] },
     summary: { type: String, required: true, trim: true, maxlength: 2000 },
+    selfCheckQuestions: { type: [String], default: [] },
+    references: { type: [referenceSchema], default: [] },
   },
   { _id: false }
 );

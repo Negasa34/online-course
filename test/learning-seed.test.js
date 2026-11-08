@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const course = require("../data/html5Course");
+const pythonCourse = require("../data/pythonFundamentals");
 const LearningPath = require("../models/learningPath");
 const LearningModule = require("../models/learningModule");
 const LearningLesson = require("../models/learningLesson");
@@ -15,6 +16,12 @@ const {
   seedHtml5Course,
   stableKey,
 } = require("../scripts/seed-html5-course");
+const {
+  SEED_NAMESPACE: PYTHON_SEED_NAMESPACE,
+  seedPythonFundamentals,
+  stableKey: pythonStableKey,
+  validateCourseData: validatePythonCourseData,
+} = require("../scripts/seed-python-fundamentals");
 
 const expectedLessonCounts = [
   10, 10, 13, 11, 10, 7, 10, 23, 14, 10, 12, 12, 10, 10, 0,
@@ -150,6 +157,36 @@ function fakeModels(failOnceFor) {
   };
 }
 
+function pythonFakeModels(existingPath) {
+  let nextId = 1;
+  const createModel = (initial = []) => {
+    const records = new Map(initial.map((record) => [record.seedKey, record]));
+    return {
+      records,
+      findOne(filter) {
+        const record = [...records.values()].find((item) => item.slug === filter.slug) || null;
+        const result = Promise.resolve(record);
+        result.select = () => result;
+        result.lean = () => result;
+        return result;
+      },
+      async findOneAndUpdate(filter, update) {
+        const current = records.get(filter.seedKey);
+        const record = { ...(current || { _id: `python-fake-${nextId++}` }), ...update.$set };
+        records.set(filter.seedKey, record);
+        return record;
+      },
+    };
+  };
+  return {
+    LearningPath: createModel(existingPath ? [existingPath] : []),
+    LearningModule: createModel(),
+    LearningLesson: createModel(),
+    LearningExercise: createModel(),
+    LearningQuiz: createModel(),
+  };
+}
+
 const quietLogger = { info() {}, error() {} };
 
 test("HTML5 course data contains substantive content for every specified lesson", () => {
@@ -226,14 +263,22 @@ test("learning schemas validate content and use collections distinct from instru
     scope: "lesson",
     title: "Test quiz",
     lesson: "507f1f77bcf86cd799439012",
-    questions: Array.from({ length: 3 }, (_, index) => ({
+    questions: [...Array.from({ length: 3 }, (_, index) => ({
       questionKey: `q${index}`,
       type: "multiple-choice",
       prompt: "Which element describes the page's main heading?",
       choices: [{ id: "a", text: "h1" }, { id: "b", text: "div" }],
       correctChoiceId: "a",
       explanation: "The h1 element is the top-level heading for the content.",
-    })),
+    })), {
+      questionKey: "short-answer",
+      type: "short-answer",
+      prompt: "Explain why the selected element fits.",
+      choices: [],
+      requirements: ["Use your own words."],
+      rubric: ["Explains the concept accurately."],
+      explanation: "A strong explanation connects the element to its semantic purpose.",
+    }],
   });
   await assert.doesNotReject(validQuiz.validate());
 
@@ -335,4 +380,130 @@ test("seed reports partial write failures and can safely retry them", async () =
   assert.deepEqual(retry.failed, []);
   assert.equal(models.LearningExercise.documents.size, 162);
   assert.equal(models.LearningPathProgress.documents.size, 0);
+});
+
+test("Python Fundamentals curriculum is substantive and namespaced separately", () => {
+  assert.equal(pythonCourse.slug, "python-fundamentals");
+  assert.equal(pythonCourse.subject, "python");
+  assert.deepEqual(pythonCourse.prerequisiteSlugs, []);
+  assert.equal(pythonCourse.minimumPythonVersion, "3.11");
+  assert.equal(pythonCourse.modules.length, 5);
+  assert.equal(pythonCourse.modules.flatMap((module) => module.lessons).length, 25);
+  assert.equal(PYTHON_SEED_NAMESPACE, "learnhub-python-v1");
+  assert.notEqual(pythonStableKey("path", pythonCourse.slug), stableKey("path", course.slug));
+  assert.doesNotThrow(() => validatePythonCourseData(pythonCourse));
+
+  for (const lesson of pythonCourse.modules.flatMap((module) => module.lessons)) {
+    assert.ok(lesson.content.explanation.join(" ").split(/\s+/).length >= 60, lesson.slug);
+    assert.equal(lesson.exercise.language, "python");
+    assert.ok(lesson.exercise.selfChecks.length >= 2, lesson.slug);
+    assert.ok(lesson.quiz.length >= 3, lesson.slug);
+    assert.ok(lesson.quiz.every((item) => item.explanation && (
+      item.type === "short-answer"
+        ? item.requirements.length > 0 && item.rubric.length > 0
+        : item.choices.some((choice) => choice.id === item.correctChoiceId)
+    )), lesson.slug);
+  }
+});
+
+test("Python Learning Path schemas accept local self-check content and preserve HTML requirements", async () => {
+  const lesson = pythonCourse.modules[0].lessons[0];
+  const validPythonExercise = new LearningExercise({
+    seedKey: pythonStableKey("exercise", lesson.slug),
+    path: "507f1f77bcf86cd799439011",
+    module: "507f1f77bcf86cd799439012",
+    lesson: "507f1f77bcf86cd799439013",
+    title: lesson.exercise.title,
+    language: "python",
+    difficulty: "beginner",
+    instructions: lesson.exercise.instructions,
+    starterCode: lesson.exercise.starterCode,
+    requirements: [],
+    selfChecks: lesson.exercise.selfChecks,
+    hints: lesson.exercise.hints,
+    solutionCode: lesson.exercise.solutionCode,
+    solutionExplanation: lesson.exercise.solutionExplanation,
+  });
+  await assert.doesNotReject(validPythonExercise.validate());
+
+  const invalidPythonExercise = new LearningExercise({
+    seedKey: "invalid-python-exercise",
+    path: "507f1f77bcf86cd799439011",
+    module: "507f1f77bcf86cd799439012",
+    lesson: "507f1f77bcf86cd799439013",
+    title: "Missing self-checks",
+    language: "python",
+    difficulty: "beginner",
+    instructions: "Practice locally.",
+    starterCode: "print(1)",
+    requirements: [],
+    selfChecks: [],
+    hints: ["Hint one", "Hint two"],
+    solutionCode: "print(1)",
+    solutionExplanation: "This is a local example.",
+  });
+  await assert.rejects(invalidPythonExercise.validate());
+
+  const invalidHtmlExercise = new LearningExercise({
+    seedKey: "invalid-html-exercise",
+    path: "507f1f77bcf86cd799439011",
+    module: "507f1f77bcf86cd799439012",
+    lesson: "507f1f77bcf86cd799439013",
+    title: "Missing HTML checks",
+    language: "html",
+    difficulty: "beginner",
+    instructions: "Add a heading.",
+    starterCode: "<main></main>",
+    requirements: [],
+    hints: ["Hint one", "Hint two"],
+    solutionCode: "<main><h1>Title</h1></main>",
+    solutionExplanation: "Add a heading inside main.",
+  });
+  await assert.rejects(invalidHtmlExercise.validate());
+});
+
+test("Python Fundamentals seed is repeatable and leaves HTML5 data untouched", async () => {
+  const htmlPath = {
+    _id: "existing-html5-id",
+    seedKey: "learnhub-html5-v1:path:html5-complete-web-development-course",
+    slug: "html5-complete-web-development-course",
+    title: course.title,
+    contentVersion: course.contentVersion,
+  };
+  const models = pythonFakeModels(htmlPath);
+  const first = await seedPythonFundamentals({ modelSet: models, logger: quietLogger });
+  assert.deepEqual(first.failed, []);
+  assert.deepEqual(first.succeeded, { paths: 1, modules: 5, lessons: 25, exercises: 25, quizzes: 31 });
+  const sizes = Object.fromEntries(Object.entries(models).map(([name, model]) => [name, model.records.size]));
+  const ids = Object.fromEntries(Object.entries(models).map(([name, model]) => [
+    name,
+    [...model.records].map(([key, record]) => [key, record._id]),
+  ]));
+  const second = await seedPythonFundamentals({ modelSet: models, logger: quietLogger });
+  assert.deepEqual(second.failed, []);
+  for (const [name, model] of Object.entries(models)) {
+    assert.equal(model.records.size, sizes[name], `${name} must not gain duplicates`);
+    assert.deepEqual([...model.records].map(([key, record]) => [key, record._id]), ids[name]);
+  }
+  assert.deepEqual(models.LearningPath.records.get(htmlPath.seedKey), htmlPath);
+  assert.equal([...models.LearningPath.records.values()].filter((item) => item.slug === pythonCourse.slug).length, 1);
+  assert.ok([...models.LearningExercise.records.values()].every((exercise) => exercise.language === "python" && exercise.requirements.length === 0));
+});
+
+test("Python seed rejects malformed content and a foreign path slug before writing", async () => {
+  const malformedModels = pythonFakeModels();
+  const malformed = JSON.parse(JSON.stringify(pythonCourse));
+  malformed.modules[0].lessons[0].content.codeExample.output = "";
+  const rejected = await seedPythonFundamentals({ modelSet: malformedModels, courseData: malformed, logger: quietLogger });
+  assert.ok(rejected.failed.some((failure) => failure.kind === "course content validation"));
+  assert.equal(Object.values(malformedModels).reduce((total, model) => total + model.records.size, 0), 0);
+
+  const conflictModels = pythonFakeModels({
+    _id: "foreign-path-id",
+    seedKey: "another-seed:python-fundamentals",
+    slug: pythonCourse.slug,
+  });
+  const conflict = await seedPythonFundamentals({ modelSet: conflictModels, logger: quietLogger });
+  assert.ok(conflict.failed.some((failure) => failure.kind === "path conflict"));
+  assert.equal(Object.values(conflictModels).reduce((total, model) => total + model.records.size, 0), 1);
 });

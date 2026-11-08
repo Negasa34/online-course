@@ -32,10 +32,19 @@ const learningExerciseSchema = new mongoose.Schema(
     module: { type: mongoose.Schema.Types.ObjectId, ref: "LearningModule", required: true, index: true },
     lesson: { type: mongoose.Schema.Types.ObjectId, ref: "LearningLesson", required: true, index: true },
     title: { type: String, required: true, trim: true, maxlength: 180 },
+    language: { type: String, enum: ["html", "python"], default: "html", index: true },
     difficulty: { type: String, enum: ["beginner", "intermediate", "advanced"], required: true },
     instructions: { type: String, required: true, trim: true, maxlength: 4000 },
     starterCode: { type: String, required: true, maxlength: 12000 },
-    requirements: { type: [exerciseRequirementSchema], required: true, validate: [(items) => items.length > 0, "At least one requirement is required"] },
+    requirements: {
+      type: [exerciseRequirementSchema],
+      default: [],
+      validate: {
+        validator(items) { return this.language === "python" || items.length > 0; },
+        message: "HTML exercises need at least one structural requirement",
+      },
+    },
+    selfChecks: { type: [String], default: [] },
     hints: { type: [String], required: true, validate: [(items) => items.length >= 2, "At least two hints are required"] },
     solutionCode: { type: String, required: true, maxlength: 20000 },
     solutionExplanation: { type: String, required: true, trim: true, maxlength: 5000 },
@@ -45,6 +54,12 @@ const learningExerciseSchema = new mongoose.Schema(
 );
 
 learningExerciseSchema.pre("validate", function validateRequirements() {
+  if (this.language === "python") {
+    if (this.requirements.length || this.selfChecks.length < 2) {
+      this.invalidate("selfChecks", "Python exercises need self-checks and must not use HTML requirements");
+    }
+    return;
+  }
   for (const [index, requirement] of this.requirements.entries()) {
     if (requirement.type === "element-text" && !requirement.text) {
       this.invalidate(`requirements.${index}.text`, "Text requirements need expected text");

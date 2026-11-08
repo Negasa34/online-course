@@ -4,6 +4,13 @@ import { apiRequest } from './api'
 import './LearningPaths.css'
 
 const ROOT = '/learning-paths'
+const PLANNED_PYTHON_TRACKS = [
+  'Python Web Development',
+  'Python Data Science',
+  'Python Machine Learning',
+  'Python AI and Deep Learning',
+  'Python Automation and Software Development',
+]
 const EXAMPLE_HTML = '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <title>My first page</title>\n</head>\n<body>\n  <main>\n    <h1>Hello, HTML!</h1>\n    <p>I am learning to build web pages.</p>\n  </main>\n</body>\n</html>'
 const PREVIEW_CSP = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; form-action 'none'; base-uri 'none'"
 
@@ -27,7 +34,8 @@ function LearningLink({ href, children, className = '', ...props }) {
 
 function LearningPathThumbnail({ path }) {
   const pathName = `${path.title || ''} ${path.slug || ''}`.toLowerCase()
-  const category = /react/.test(pathName) ? 'react'
+  const category = /python/.test(pathName) ? 'python'
+    : /react/.test(pathName) ? 'react'
     : /javascript|\bjs\b/.test(pathName) ? 'javascript'
       : /node(?:\.js)?/.test(pathName) ? 'node'
         : /mongo(?:db)?/.test(pathName) ? 'mongodb'
@@ -36,6 +44,7 @@ function LearningPathThumbnail({ path }) {
               : 'general'
   const PathIcon = {
     html: Code,
+    python: Code,
     css: Palette,
     javascript: FileCode,
     react: Atom,
@@ -45,6 +54,49 @@ function LearningPathThumbnail({ path }) {
   }[category]
 
   return <span className={`learning-path-thumbnail is-${category}`} aria-hidden="true"><PathIcon size={30} strokeWidth={1.8} /></span>
+}
+
+function PythonPractice({ exercise, token, user }) {
+  const [solution, setSolution] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  async function revealSolution() {
+    setLoading(true)
+    setError('')
+    try {
+      const result = await apiRequest(`/learning/exercises/${encodeURIComponent(exercise.id)}/reference-solution`, {
+        token,
+        method: 'POST',
+        body: JSON.stringify({ confirmSelfCheck: true }),
+      })
+      setSolution(result.data)
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="lesson-python-practice">
+      <div className="lesson-section-heading"><div><p>LOCAL PYTHON 3.11+</p><h2>{exercise.title}</h2></div></div>
+      <p>{exercise.instructions}</p>
+      <p className="lesson-python-notice">Write and run this code on your computer. LearnHub does not execute, submit, or verify Python code.</p>
+      <pre className="lesson-code"><code>{exercise.starterCode}</code></pre>
+      <details className="lesson-python-hints"><summary>Hints</summary><ul>{exercise.hints.map((hint) => <li key={hint}>{hint}</li>)}</ul></details>
+      <fieldset className="lesson-python-checklist">
+        <legend>Local self-check (not saved or graded)</legend>
+        {exercise.selfChecks.map((check) => <label key={check}><input type="checkbox" />{check}</label>)}
+      </fieldset>
+      {!user && <p className="lesson-python-signin"><a href="#/login">Sign in as a student</a> to reveal the reference solution after your local attempt.</p>}
+      <button className="button button-outline button-small" type="button" disabled={loading || !token || user?.role !== 'STUDENT'} onClick={revealSolution}>
+        {loading ? 'Loading solution…' : solution ? 'Refresh reference solution' : 'Show reference solution'}
+      </button>
+      {error && <p className="learning-error" role="alert">{error}</p>}
+      {solution && <section className="lesson-python-solution"><h3>Reference solution</h3><pre className="lesson-code"><code>{solution.solutionCode}</code></pre><p>{solution.solutionExplanation}</p></section>}
+    </div>
+  )
 }
 
 function FramePreview({ html }) {
@@ -113,6 +165,7 @@ function StatePanel({ loading, error, onRetry, children }) {
 
 function LessonLearningView({
   lesson,
+  token,
   user,
   submission,
   submitting,
@@ -287,7 +340,7 @@ function LessonLearningView({
             </div>
             <section className="lesson-terms"><h2>Key terms</h2><dl>{lesson.content.terminology.map((item) => <div key={item.term}><dt>{item.term}</dt><dd>{item.definition}</dd></div>)}</dl></section>
             <section className="lesson-code-section">
-              <div className="lesson-section-heading"><div><p>CODE WALKTHROUGH</p><h2>Example</h2></div><span>HTML</span></div>
+              <div className="lesson-section-heading"><div><p>CODE WALKTHROUGH</p><h2>Example</h2></div><span>{lesson.exercise?.language === 'python' ? 'PYTHON' : 'HTML'}</span></div>
               <pre className="lesson-code"><code>{lesson.content.codeExample.code}</code></pre>
               <p className="lesson-code-output">{lesson.content.codeExample.output}</p>
               <ul className="lesson-code-notes">{lesson.content.codeExample.lines.map((line) => <li key={line}>{line}</li>)}</ul>
@@ -300,13 +353,15 @@ function LessonLearningView({
                 <div className="lesson-section-heading"><div><p>HANDS-ON PRACTICE</p><h2>{lesson.exercise.title}</h2></div></div>
                 <p>{lesson.exercise.instructions}</p>
                 <ul>{lesson.exercise.hints.map((hint) => <li key={hint}>{hint}</li>)}</ul>
-                <HtmlEditor
-                  key={lesson.exercise.id}
-                  initialCode={lesson.exercise.starterCode}
-                  submitting={submitting}
-                  submission={submission}
-                  onSubmit={(html) => onSubmitExercise(lesson.exercise.id, html)}
-                />
+                lesson.exercise.language === 'python'
+                  ? <PythonPractice key={lesson.exercise.id} exercise={lesson.exercise} token={token} user={user} />
+                  : <HtmlEditor
+                    key={lesson.exercise.id}
+                    initialCode={lesson.exercise.starterCode}
+                    submitting={submitting}
+                    submission={submission}
+                    onSubmit={(html) => onSubmitExercise(lesson.exercise.id, html)}
+                  />
               </section>
             )}
             {lesson.quiz && <LearningLink className="lesson-related-quiz" href={`${ROOT}/quizzes/${encodeURIComponent(lesson.quiz.id)}`}>Continue to lesson quiz <ChevronRight size={17} /></LearningLink>}
@@ -360,23 +415,23 @@ function LearningPaths({ token, user }) {
   const fetchPage = useCallback(async () => {
     let data
     if (route.page === 'paths') {
-      data = (await apiRequest('/learning/paths')).data
+      data = (await apiRequest('/learning/paths', { token })).data
     } else if (route.page === 'overview') {
       const [path, modules] = await Promise.all([
-        apiRequest(`/learning/paths/${encodeURIComponent(route.slug)}`),
-        apiRequest(`/learning/paths/${encodeURIComponent(route.slug)}/modules`),
+        apiRequest(`/learning/paths/${encodeURIComponent(route.slug)}`, { token }),
+        apiRequest(`/learning/paths/${encodeURIComponent(route.slug)}/modules`, { token }),
       ])
       data = { ...path.data, modules: modules.data }
     } else if (route.page === 'module') {
       const [module, assessment] = await Promise.all([
-        apiRequest(`/learning/modules/${encodeURIComponent(route.id)}`),
-        apiRequest(`/learning/modules/${encodeURIComponent(route.id)}/assessment`).catch(() => null),
+        apiRequest(`/learning/modules/${encodeURIComponent(route.id)}`, { token }),
+        apiRequest(`/learning/modules/${encodeURIComponent(route.id)}/assessment`, { token }).catch(() => null),
       ])
       data = { ...module.data, assessment: assessment?.data || null }
     } else if (route.page === 'lesson') {
-      const lesson = await apiRequest(`/learning/lessons/${encodeURIComponent(route.id)}`)
-      const quiz = await apiRequest(`/learning/lessons/${encodeURIComponent(route.id)}/quiz`).catch(() => null)
-      const modules = await apiRequest(`/learning/paths/${encodeURIComponent(lesson.data.path.slug)}/modules`)
+      const lesson = await apiRequest(`/learning/lessons/${encodeURIComponent(route.id)}`, { token })
+      const quiz = await apiRequest(`/learning/lessons/${encodeURIComponent(route.id)}/quiz`, { token }).catch(() => null)
+      const modules = await apiRequest(`/learning/paths/${encodeURIComponent(lesson.data.path.slug)}/modules`, { token })
       data = { ...lesson.data, quiz: quiz?.data || null, modules: modules.data }
       if (token && user?.role === 'STUDENT') {
         const [progress, bookmarks] = await Promise.all([
@@ -388,9 +443,9 @@ function LearningPaths({ token, user }) {
         data.isBookmarked = bookmarks.data.some((item) => String(item.lesson._id) === String(route.id))
       }
     } else if (route.page === 'quiz') {
-      data = (await apiRequest(`/learning/quizzes/${encodeURIComponent(route.id)}`)).data
+      data = (await apiRequest(`/learning/quizzes/${encodeURIComponent(route.id)}`, { token })).data
     } else if (route.page === 'final-assessment') {
-      data = (await apiRequest(`/learning/paths/${encodeURIComponent(route.slug)}/assessment`)).data
+      data = (await apiRequest(`/learning/paths/${encodeURIComponent(route.slug)}/assessment`, { token })).data
     } else if (route.page === 'projects') {
       if (!token || user?.role !== 'STUDENT') throw new Error('Log in with a student account to view project submission status.')
       data = (await apiRequest(`/learning/paths/${encodeURIComponent(route.slug)}/projects`, { token })).data
@@ -450,7 +505,7 @@ function LearningPaths({ token, user }) {
     }
     const payload = quiz.questions.map((question) => ({
       questionKey: question.questionKey,
-      ...(question.type === 'practical'
+      ...(['practical', 'short-answer'].includes(question.type)
         ? { response: answers[question.questionKey] ?? question.starterCode ?? '' }
         : { choiceId: answers[question.questionKey] || '' }),
     }))
@@ -552,28 +607,37 @@ function LearningPaths({ token, user }) {
             {requestState.data?.map((path) => (
               <article className="learning-path-card" key={path._id}>
                 <LearningPathThumbnail path={path} />
-                <p className="eyebrow">{path.language || 'LEARNING PATH'}</p><h2>{path.title}</h2><p>{path.subtitle}</p>
+                <p className="eyebrow">{path.subject === 'python' ? `PYTHON · ${path.trackKey}` : path.language || 'LEARNING PATH'}</p><h2>{path.title}</h2><p>{path.subtitle}</p>
+                {path.estimatedHours && <p className="learning-path-time">About {path.estimatedHours} hours{path.minimumPythonVersion ? ` · Python ${path.minimumPythonVersion}+` : ''}</p>}
+                {!path.access?.allowed && <p className="learning-prerequisite-label">Locked: {path.access?.incompleteSlugs?.join(', ') || 'student sign-in required'}</p>}
                 <p className="learning-counts">{path.moduleCount} modules <span>·</span> {path.lessonCount} lessons</p>
                 <LearningLink className="button button-dark" href={`${ROOT}/${encodeURIComponent(path.slug)}`}>Explore path <span aria-hidden="true">→</span></LearningLink>
               </article>
             ))}
             {!requestState.data?.length && <div className="learning-state">No published learning paths are available yet.</div>}
           </div>
+          <section className="learning-future-tracks" aria-labelledby="learning-future-tracks-title">
+            <p className="eyebrow">FUTURE PYTHON SPECIALIZATIONS</p><h2 id="learning-future-tracks-title">Planned after Python Fundamentals</h2>
+            <div>{PLANNED_PYTHON_TRACKS.map((title) => <article className="learning-future-track" key={title}><strong>{title}</strong><span>Not published · requires Python Fundamentals</span></article>)}</div>
+          </section>
         </section>,
       )}
       {route.page === 'overview' && statePanel(requestState.data && (
         <section>
           <header className="learning-page-heading"><p className="eyebrow">{requestState.data.path.language || 'LEARNING PATH'}</p><h1>{requestState.data.path.title}</h1><p>{requestState.data.path.subtitle}</p><p>{requestState.data.path.description}</p></header>
+          {!requestState.data.access?.allowed && <div className="learning-prerequisite-notice" role="status"><strong>This path is locked.</strong><p>Complete the required Learning Path before opening lessons or assessments.</p>{requestState.data.access?.incompleteSlugs?.map((slug) => <LearningLink key={slug} href={`${ROOT}/${encodeURIComponent(slug)}`}>{slug}</LearningLink>)}</div>}
           <div className="learning-action-row">
-            <LearningLink className="button button-dark" href={`${ROOT}/modules/${encodeURIComponent(requestState.data.modules[0]?._id || '')}`}>Start learning</LearningLink>
-            <LearningLink className="button button-outline" href={`${ROOT}/${encodeURIComponent(route.slug)}/projects`}>Final projects</LearningLink>
-            <LearningLink className="button button-outline" href={`${ROOT}/${encodeURIComponent(route.slug)}/assessment`}>Final assessment</LearningLink>
+            {requestState.data.access?.allowed !== false && <LearningLink className="button button-dark" href={`${ROOT}/modules/${encodeURIComponent(requestState.data.modules[0]?._id || '')}`}>Start learning</LearningLink>}
+            {requestState.data.access?.allowed !== false && <LearningLink className="button button-outline" href={`${ROOT}/${encodeURIComponent(route.slug)}/projects`}>Final projects</LearningLink>}
+            {requestState.data.access?.allowed !== false && <LearningLink className="button button-outline" href={`${ROOT}/${encodeURIComponent(route.slug)}/assessment`}>Final assessment</LearningLink>}
           </div>
           <section className="learning-section"><p className="eyebrow">CURRICULUM</p><h2>{requestState.data.moduleCount} modules · {requestState.data.lessonCount} lessons</h2>
             <div className="learning-module-list">{requestState.data.modules.map((module) => (
               <article className="learning-module-card" key={module._id}>
                 <span className="learning-order">{String(module.order).padStart(2, '0')}</span><div><h3>{module.title}</h3><p>{module.summary}</p><small>{module.lessonCount} lessons</small></div>
-                <LearningLink className="text-link" href={`${ROOT}/modules/${encodeURIComponent(module._id)}`}>Open module →</LearningLink>
+                {requestState.data.access?.allowed === false
+                  ? <span className="text-link" aria-disabled="true">Locked by prerequisite</span>
+                  : <LearningLink className="text-link" href={`${ROOT}/modules/${encodeURIComponent(module._id)}`}>Open module →</LearningLink>}
               </article>
             ))}</div>
           </section>
@@ -595,6 +659,7 @@ function LearningPaths({ token, user }) {
       {route.page === 'lesson' && statePanel(requestState.data && (
         <LessonLearningView
           lesson={requestState.data}
+          token={token}
           user={user?.role === 'STUDENT' ? user : null}
           submission={submission}
           submitting={submitting}
@@ -605,7 +670,7 @@ function LearningPaths({ token, user }) {
       ))}
       {(route.page === 'quiz' || route.page === 'final-assessment') && statePanel(requestState.data && (
         <section className="learning-quiz">
-          <header className="learning-page-heading"><p className="eyebrow">{requestState.data.scope} ASSESSMENT</p><h1>{requestState.data.title}</h1><p>Choose an answer for each question. Practical responses are submitted for your review and do not affect the automatically scored percentage.</p></header>
+          <header className="learning-page-heading"><p className="eyebrow">{requestState.data.scope} ASSESSMENT</p><h1>{requestState.data.title}</h1><p>Choose an answer for each question. Short-answer and practical responses are submitted for review and do not affect the automatically scored percentage.</p></header>
           {(() => {
             const questionCount = requestState.data.questions.length
             const answeredCount = requestState.data.questions.filter((question) => Boolean(answers[question.questionKey]?.trim())).length
@@ -622,6 +687,8 @@ function LearningPaths({ token, user }) {
               <legend>{index + 1}. {question.prompt}</legend>
               {question.type === 'practical' ? (
                 <textarea className="learning-code-input" value={answers[question.questionKey] ?? question.starterCode ?? ''} onChange={(event) => setAnswers((current) => ({ ...current, [question.questionKey]: event.target.value }))} rows={12} />
+              ) : question.type === 'short-answer' ? (
+                <textarea className="learning-short-answer-input" aria-label={`Short answer for question ${index + 1}`} value={answers[question.questionKey] ?? ''} onChange={(event) => setAnswers((current) => ({ ...current, [question.questionKey]: event.target.value }))} rows={4} />
               ) : question.choices.map((choice) => (
                 <label key={choice.id} className="learning-choice"><input type="radio" name={question.questionKey} value={choice.id} checked={answers[question.questionKey] === choice.id} onChange={() => setAnswers((current) => ({ ...current, [question.questionKey]: choice.id }))} />{choice.text}</label>
               ))}
@@ -653,11 +720,11 @@ function LearningPaths({ token, user }) {
         </section>
       ))}
       {route.page === 'projects' && statePanel(requestState.data && (
-        <section><header className="learning-page-heading"><p className="eyebrow">CAPSTONE WORK</p><h1>{requestState.data.module.title}</h1><p>Build each project, then submit HTML for the checklist-based requirements.</p></header>
+        <section><header className="learning-page-heading"><p className="eyebrow">CAPSTONE WORK</p><h1>{requestState.data.module.title}</h1><p>Complete each project using its documented evaluation method.</p></header>
           {requestState.data.projects.map(({ lesson, exercise, submission: projectSubmission }) => <article className="learning-project-card" key={lesson._id}>
-            <p className="eyebrow">{projectSubmission.passed ? 'PASSED' : projectSubmission.submitted ? 'IN PROGRESS' : 'NOT STARTED'}</p><h2>{lesson.title}</h2><p>{lesson.project?.description || exercise?.instructions}</p>
+            <p className="eyebrow">{exercise?.language === 'python' ? 'LOCAL SELF-CHECK · NOT RECORDED' : projectSubmission.passed ? 'PASSED' : projectSubmission.submitted ? 'IN PROGRESS' : 'NOT STARTED'}</p><h2>{lesson.title}</h2><p>{lesson.project?.description || exercise?.instructions}</p>
             {lesson.project?.learningObjectives?.length > 0 && <ul>{lesson.project.learningObjectives.map((objective) => <li key={objective}>{objective}</li>)}</ul>}
-            <LearningLink className="button button-outline button-small" href={`${ROOT}/lessons/${encodeURIComponent(lesson._id)}`}>{projectSubmission.submitted ? 'Continue project' : 'Start project'}</LearningLink>
+            <LearningLink className="button button-outline button-small" href={`${ROOT}/lessons/${encodeURIComponent(lesson._id)}`}>{exercise?.language === 'python' ? 'Open project' : projectSubmission.submitted ? 'Continue project' : 'Start project'}</LearningLink>
           </article>)}
         </section>
       ))}

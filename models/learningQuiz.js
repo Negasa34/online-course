@@ -11,7 +11,7 @@ const quizChoiceSchema = new mongoose.Schema(
 const quizQuestionSchema = new mongoose.Schema(
   {
     questionKey: { type: String, required: true, trim: true, maxlength: 100 },
-    type: { type: String, enum: ["multiple-choice", "true-false", "code-output", "practical"], required: true },
+    type: { type: String, enum: ["multiple-choice", "true-false", "code-output", "short-answer", "practical"], required: true },
     prompt: { type: String, required: true, trim: true, maxlength: 4000 },
     choices: { type: [quizChoiceSchema], default: [] },
     correctChoiceId: { type: String, trim: true, maxlength: 20 },
@@ -33,8 +33,8 @@ quizQuestionSchema.pre("validate", function validateQuestion() {
   if (new Set(this.choices.map((choice) => choice.id)).size !== this.choices.length) {
     this.invalidate("choices", "Choice IDs must be unique within a question");
   }
-  if (this.type === "practical" && (!this.requirements.length || !this.rubric.length)) {
-    this.invalidate("rubric", "Practical questions need requirements and an evaluation rubric");
+  if (["short-answer", "practical"].includes(this.type) && (!this.requirements.length || !this.rubric.length)) {
+    this.invalidate("rubric", "Review questions need requirements and an evaluation rubric");
   }
 });
 

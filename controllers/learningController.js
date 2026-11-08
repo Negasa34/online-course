@@ -17,6 +17,7 @@ const {
   saveExerciseAttempt,
   saveQuizAttempt,
 } = require("../services/learningProgressService");
+const { getLearningPathAccess } = require("../services/learningPathAccess");
 
 function respondError(res, error, message) {
   if (error.status) {
@@ -40,9 +41,11 @@ function publicExercise(exercise) {
     module: exercise.module,
     path: exercise.path,
     title: exercise.title,
+    language: exercise.language || "html",
     difficulty: exercise.difficulty,
     instructions: exercise.instructions,
     starterCode: exercise.starterCode,
+    selfChecks: exercise.selfChecks || [],
     hints: exercise.hints,
     ...(exercise.project ? {
       project: {
@@ -83,12 +86,31 @@ function publicQuiz(quiz) {
         starterCode: question.starterCode,
         hints: question.hints,
       } : {}),
+      ...(question.type === "short-answer" ? { hints: question.hints } : {}),
     })),
   };
 }
 
 function validId(id) {
   return mongoose.isValidObjectId(id);
+}
+
+async function allowPathAccess(req, res, path) {
+  const access = await getLearningPathAccess(path, req.user);
+  if (access.allowed) return true;
+  const authenticationRequired = access.requiresAuthentication;
+  res.status(authenticationRequired ? 401 : 403).json({
+    success: false,
+    code: authenticationRequired ? "STUDENT_AUTHENTICATION_REQUIRED" : "LEARNING_PREREQUISITE_REQUIRED",
+    message: authenticationRequired
+      ? "Log in as a student to access this learning path."
+      : "Complete the required Python Fundamentals path before opening this content.",
+    data: {
+      requiredPrerequisites: access.requiredSlugs,
+      incompletePrerequisites: access.incompleteSlugs,
+    },
+  });
+  return false;
 }
 
 function validateAnswers(body, quiz) {
@@ -120,12 +142,12 @@ function validateAnswers(body, quiz) {
     }
     received.add(answer.questionKey);
     const question = quiz.questions.find((item) => item.questionKey === answer.questionKey);
-    if (question.type === "practical") {
+    if (["practical", "short-answer"].includes(question.type)) {
       if (Object.keys(answer).some((key) => !["questionKey", "response"].includes(key))) {
-        return "Practical answers must contain only a question key and HTML response";
+        return "Review answers must contain only a question key and response";
       }
       if (typeof answer.response !== "string" || !answer.response.trim()) {
-        return "Practical questions require a non-empty HTML response";
+        return "Review questions require a non-empty response";
       }
       if (Buffer.byteLength(answer.response, "utf8") > 12000) {
         return "Practical responses must be 12000 bytes or fewer";
@@ -168,11 +190,12 @@ async function listPaths(req, res) {
     const lessonsByPath = countMap(lessonCounts);
     return res.status(200).json({
       success: true,
-      data: paths.map((path) => ({
+      data: await Promise.all(paths.map(async (path) => ({
         ...path,
         moduleCount: modulesByPath.get(String(path._id)) || 0,
         lessonCount: lessonsByPath.get(String(path._id)) || 0,
-      })),
+        access: await getLearningPathAccess(path, req.user),
+      }))),
     });
   } catch (error) {
     return respondError(res, error, "Could not fetch learning paths");
@@ -189,7 +212,13 @@ async function getPath(req, res) {
     ]);
     return res.status(200).json({
       success: true,
-      data: { path: publicDocument(path), moduleCount: modules.length, lessonCount, modules },
+      data: {
+        path: publicDocument(path),
+        access: await getLearningPathAccess(path, req.user),
+        moduleCount: modules.length,
+        lessonCount,
+        modules,
+      },
     });
   } catch (error) {
     return respondError(res, error, "Could not fetch learning path");
@@ -234,8 +263,11 @@ async function getModule(req, res) {
   try {
     const module = await LearningModule.findById(moduleId).select("-seedKey").lean();
     if (!module) return res.status(404).json({ success: false, message: "Learning module not found" });
-    const path = await LearningPath.findOne({ _id: module.path, status: "PUBLISHED" }).select("_id slug title");
+    const path = await LearningPath.findOne({ _id: module.path, status: "PUBLISHED" })
+      .select("_id slug title prerequisiteSlugs")
+      .lean();
     if (!path) return res.status(404).json({ success: false, message: "Learning module not found" });
+    if (!(await allowPathAccess(req, res, path))) return;
     const lessons = await LearningLesson.find({ module: module._id })
       .select("_id module path title slug order estimatedMinutes content.introduction content.objectives")
       .sort({ order: 1 })
@@ -251,9 +283,13 @@ async function listModuleLessons(req, res) {
   if (!validId(moduleId)) return res.status(400).json({ success: false, message: "Invalid module ID" });
   try {
     const module = await LearningModule.findById(moduleId).select("_id path");
-    if (!module || !(await LearningPath.exists({ _id: module.path, status: "PUBLISHED" }))) {
+    const path = module && await LearningPath.findOne({ _id: module.path, status: "PUBLISHED" })
+      .select("_id slug prerequisiteSlugs")
+      .lean();
+    if (!module || !path) {
       return res.status(404).json({ success: false, message: "Learning module not found" });
     }
+    if (!(await allowPathAccess(req, res, path))) return;
     const lessons = await LearningLesson.find({ module: module._id })
       .select("_id module path title slug order estimatedMinutes content.introduction content.objectives")
       .sort({ order: 1 })
@@ -269,13 +305,16 @@ async function getLesson(req, res) {
   if (!validId(lessonId)) return res.status(400).json({ success: false, message: "Invalid lesson ID" });
   try {
     const lesson = await LearningLesson.findById(lessonId).lean();
-    if (!lesson || !(await LearningPath.exists({ _id: lesson.path, status: "PUBLISHED" }))) {
+    const path = lesson && await LearningPath.findOne({ _id: lesson.path, status: "PUBLISHED" })
+      .select("_id slug title prerequisiteSlugs")
+      .lean();
+    if (!lesson || !path) {
       return res.status(404).json({ success: false, message: "Learning lesson not found" });
     }
-    const [module, exercise, path] = await Promise.all([
+    if (!(await allowPathAccess(req, res, path))) return;
+    const [module, exercise] = await Promise.all([
       LearningModule.findById(lesson.module).select("_id path title slug order").lean(),
       LearningExercise.findOne({ lesson: lesson._id }).lean(),
-      LearningPath.findOne({ _id: lesson.path, status: "PUBLISHED" }).select("_id slug title").lean(),
     ]);
     return res.status(200).json({ success: true, data: { ...publicLesson(lesson), module, path, exercise: publicExercise(exercise) } });
   } catch (error) {
@@ -288,9 +327,13 @@ async function listExercises(req, res) {
   if (!validId(lessonId)) return res.status(400).json({ success: false, message: "Invalid lesson ID" });
   try {
     const lesson = await LearningLesson.findById(lessonId).select("_id path");
-    if (!lesson || !(await LearningPath.exists({ _id: lesson.path, status: "PUBLISHED" }))) {
+    const path = lesson && await LearningPath.findOne({ _id: lesson.path, status: "PUBLISHED" })
+      .select("_id slug prerequisiteSlugs")
+      .lean();
+    if (!lesson || !path) {
       return res.status(404).json({ success: false, message: "Learning lesson not found" });
     }
+    if (!(await allowPathAccess(req, res, path))) return;
     const exercises = await LearningExercise.find({ lesson: lessonId }).lean();
     return res.status(200).json({ success: true, data: exercises.map(publicExercise) });
   } catch (error) {
@@ -307,8 +350,15 @@ async function submitExercise(req, res) {
   }
   try {
     const exercise = await LearningExercise.findById(exerciseId);
-    if (!exercise || !(await LearningPath.exists({ _id: exercise.path, status: "PUBLISHED" }))) {
+    const path = exercise && await LearningPath.findOne({ _id: exercise.path, status: "PUBLISHED" })
+      .select("_id slug prerequisiteSlugs")
+      .lean();
+    if (!exercise || !path) {
       return res.status(404).json({ success: false, message: "Learning exercise not found" });
+    }
+    if (!(await allowPathAccess(req, res, path))) return;
+    if (exercise.language === "python") {
+      return res.status(400).json({ success: false, message: "Python practice is completed locally and is not submitted to LearnHub." });
     }
     const result = checkHtmlRequirements(req.body.html, exercise.requirements);
     const attempt = await saveExerciseAttempt(req.user.id, exercise, result);
@@ -327,12 +377,53 @@ async function submitExercise(req, res) {
   }
 }
 
+async function getExerciseReferenceSolution(req, res) {
+  const { exerciseId } = req.params;
+  if (!validId(exerciseId)) return res.status(400).json({ success: false, message: "Invalid exercise ID" });
+  if (
+    !req.body ||
+    typeof req.body !== "object" ||
+    Array.isArray(req.body) ||
+    Object.keys(req.body).length !== 1 ||
+    req.body.confirmSelfCheck !== true
+  ) {
+    return res.status(400).json({ success: false, message: "Confirm that you attempted the local self-check first" });
+  }
+  try {
+    const exercise = await LearningExercise.findById(exerciseId);
+    if (!exercise || exercise.language !== "python") {
+      return res.status(404).json({ success: false, message: "Python reference solution not found" });
+    }
+    const path = await LearningPath.findOne({ _id: exercise.path, status: "PUBLISHED" })
+      .select("_id slug prerequisiteSlugs")
+      .lean();
+    if (!path) return res.status(404).json({ success: false, message: "Learning exercise not found" });
+    if (!(await allowPathAccess(req, res, path))) return;
+    const lesson = await LearningLesson.findById(exercise.lesson)
+      .select("project.solutionCode project.solutionExplanation")
+      .lean();
+    return res.status(200).json({
+      success: true,
+      data: {
+        solutionCode: lesson?.project?.solutionCode || exercise.solutionCode,
+        solutionExplanation: lesson?.project?.solutionExplanation || exercise.solutionExplanation,
+      },
+    });
+  } catch (error) {
+    return respondError(res, error, "Could not fetch the reference solution");
+  }
+}
+
 async function getQuizByFilter(req, res, filter, missingMessage) {
   try {
     const quiz = await LearningQuiz.findOne(filter).lean();
-    if (!quiz || !(await LearningPath.exists({ _id: quiz.path, status: "PUBLISHED" }))) {
+    const path = quiz && await LearningPath.findOne({ _id: quiz.path, status: "PUBLISHED" })
+      .select("_id slug prerequisiteSlugs")
+      .lean();
+    if (!quiz || !path) {
       return res.status(404).json({ success: false, message: missingMessage });
     }
+    if (!(await allowPathAccess(req, res, path))) return;
     return res.status(200).json({ success: true, data: publicQuiz(quiz) });
   } catch (error) {
     return respondError(res, error, "Could not fetch the quiz");
@@ -369,18 +460,22 @@ async function submitQuiz(req, res) {
   if (!validId(quizId)) return res.status(400).json({ success: false, message: "Invalid quiz ID" });
   try {
     const quiz = await LearningQuiz.findById(quizId);
-    if (!quiz || !(await LearningPath.exists({ _id: quiz.path, status: "PUBLISHED" }))) {
+    const path = quiz && await LearningPath.findOne({ _id: quiz.path, status: "PUBLISHED" })
+      .select("_id slug prerequisiteSlugs")
+      .lean();
+    if (!quiz || !path) {
       return res.status(404).json({ success: false, message: "Quiz not found" });
     }
+    if (!(await allowPathAccess(req, res, path))) return;
     const validationMessage = validateAnswers(req.body, quiz);
     if (validationMessage) return res.status(400).json({ success: false, message: validationMessage });
 
     const answerByKey = new Map(req.body.answers.map((answer) => [answer.questionKey, answer]));
-    const objectiveQuestions = quiz.questions.filter((question) => question.type !== "practical");
+    const objectiveQuestions = quiz.questions.filter((question) => !["practical", "short-answer"].includes(question.type));
     let correctCount = 0;
     const answers = quiz.questions.map((question) => {
       const submitted = answerByKey.get(question.questionKey);
-      if (question.type === "practical") {
+      if (["practical", "short-answer"].includes(question.type)) {
         return {
           questionKey: question.questionKey,
           response: submitted.response,
@@ -416,7 +511,7 @@ async function submitQuiz(req, res) {
           const saved = answers.find((answer) => answer.questionKey === question.questionKey);
           return {
             questionKey: question.questionKey,
-            ...(question.type === "practical" ? { submitted: Boolean(submitted.response.trim()) } : {
+            ...(["practical", "short-answer"].includes(question.type) ? { submitted: Boolean(submitted.response.trim()) } : {
               correct: saved.correct,
               correctChoiceId: question.correctChoiceId,
               selectedChoiceId: submitted.choiceId,
@@ -424,9 +519,10 @@ async function submitQuiz(req, res) {
             explanation: question.explanation,
           };
         }),
-        practicalQuestionCount: quiz.questions.length - objectiveQuestions.length,
-        practicalReview: quiz.questions.some((question) => question.type === "practical")
-          ? "Practical responses are saved for learner review and are not included in the automatically scored percentage."
+        practicalQuestionCount: quiz.questions.filter((question) => question.type === "practical").length,
+        shortAnswerQuestionCount: quiz.questions.filter((question) => question.type === "short-answer").length,
+        practicalReview: quiz.questions.some((question) => ["practical", "short-answer"].includes(question.type))
+          ? "Short-answer and practical responses are saved for learner review and are not included in the automatically scored percentage."
           : null,
       },
     });
@@ -509,9 +605,13 @@ async function markLessonVisited(req, res) {
   if (!validId(lessonId)) return res.status(400).json({ success: false, message: "Invalid lesson ID" });
   try {
     const lesson = await LearningLesson.findById(lessonId).select("_id path module");
-    if (!lesson || !(await LearningPath.exists({ _id: lesson.path, status: "PUBLISHED" }))) {
+    const path = lesson && await LearningPath.findOne({ _id: lesson.path, status: "PUBLISHED" })
+      .select("_id slug prerequisiteSlugs")
+      .lean();
+    if (!lesson || !path) {
       return res.status(404).json({ success: false, message: "Learning lesson not found" });
     }
+    if (!(await allowPathAccess(req, res, path))) return;
     await recordLessonVisit(req.user.id, lesson);
     return res.status(200).json({ success: true, message: "Learning position updated" });
   } catch (error) {
@@ -527,9 +627,13 @@ async function markLessonCompleted(req, res) {
   }
   try {
     const lesson = await LearningLesson.findById(lessonId).select("_id path module title slug");
-    if (!lesson || !(await LearningPath.exists({ _id: lesson.path, status: "PUBLISHED" }))) {
+    const path = lesson && await LearningPath.findOne({ _id: lesson.path, status: "PUBLISHED" })
+      .select("_id slug prerequisiteSlugs")
+      .lean();
+    if (!lesson || !path) {
       return res.status(404).json({ success: false, message: "Learning lesson not found" });
     }
+    if (!(await allowPathAccess(req, res, path))) return;
     await completeLesson(req.user.id, lesson);
     const [progress, completedLessons, totalLessons] = await Promise.all([
       LearningLessonProgress.findOne({ user: req.user.id, lesson: lesson._id }).select("completed completedAt lastViewedAt").lean(),
@@ -567,9 +671,13 @@ async function setLessonBookmark(req, res) {
   }
   try {
     const lesson = await LearningLesson.findById(lessonId).select("_id path");
-    if (!lesson || !(await LearningPath.exists({ _id: lesson.path, status: "PUBLISHED" }))) {
+    const path = lesson && await LearningPath.findOne({ _id: lesson.path, status: "PUBLISHED" })
+      .select("_id slug prerequisiteSlugs")
+      .lean();
+    if (!lesson || !path) {
       return res.status(404).json({ success: false, message: "Learning lesson not found" });
     }
+    if (!(await allowPathAccess(req, res, path))) return;
     if (req.body.bookmarked) {
       try {
         await LearningLessonBookmark.findOneAndUpdate(
@@ -635,7 +743,11 @@ async function getFinalProjects(req, res) {
   try {
     const path = await findPublishedPathBySlug(req.params.pathSlug);
     if (!path) return res.status(404).json({ success: false, message: "Learning path not found" });
-    const module = await LearningModule.findOne({ path: path._id, slug: "practical-html-projects" }).select("_id title");
+    if (!(await allowPathAccess(req, res, path))) return;
+    const module = await LearningModule.findOne({
+      path: path._id,
+      slug: path.finalProjectModuleSlug || "practical-html-projects",
+    }).select("_id title");
     if (!module) return res.status(404).json({ success: false, message: "Final projects are not available" });
     const lessons = await LearningLesson.find({ module: module._id })
       .select("_id module path title slug order estimatedMinutes project.description project.learningObjectives project.requirements project.steps project.expectedOutput project.evaluationChecklist")
@@ -681,6 +793,7 @@ async function getFinalProjects(req, res) {
 module.exports = {
   getFinalAssessment,
   getFinalProjects,
+  getExerciseReferenceSolution,
   getLesson,
   getLessonQuiz,
   getMyBookmarks,

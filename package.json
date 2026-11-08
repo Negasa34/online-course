@@ -9,6 +9,7 @@
     "dev": "node --watch server.js",
     "seed": "node seed.js",
     "seed:html5": "node scripts/seed-html5-course.js",
+    "seed:python-fundamentals": "node scripts/seed-python-fundamentals.js",
     "bootstrap-admin": "node bootstrap-admin.js"
   },
   "keywords": [],

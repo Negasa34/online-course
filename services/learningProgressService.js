@@ -3,6 +3,7 @@ const LearningExerciseAttempt = require("../models/learningExerciseAttempt");
 const LearningLesson = require("../models/learningLesson");
 const LearningLessonProgress = require("../models/learningLessonProgress");
 const LearningModule = require("../models/learningModule");
+const LearningPath = require("../models/learningPath");
 const LearningPathProgress = require("../models/learningPathProgress");
 const LearningQuiz = require("../models/learningQuiz");
 const LearningQuizAttempt = require("../models/learningQuizAttempt");
@@ -29,7 +30,8 @@ async function updatePathPosition(userId, lesson) {
 }
 
 async function recomputePathCompletion(userId, pathId) {
-  const [modules, lessons, completedLessons] = await Promise.all([
+  const [path, modules, lessons, completedLessons] = await Promise.all([
+    LearningPath.findOne({ _id: pathId }).select("completionPolicy").lean(),
     LearningModule.find({ path: pathId }).select("_id").lean(),
     LearningLesson.find({ path: pathId }).select("_id").lean(),
     LearningLessonProgress.countDocuments({ user: userId, path: pathId, completed: true }),
@@ -56,7 +58,9 @@ async function recomputePathCompletion(userId, pathId) {
   const passedProjectSet = new Set(passedProjectExerciseIds.map(String));
   const allProjectsPassed = projectExercises.length > 0 &&
     projectExercises.every((exercise) => passedProjectSet.has(String(exercise._id)));
-  const complete = completedLessons === lessons.length && allAssessmentsPassed && allProjectsPassed;
+  const requiresPassedProjects = path?.completionPolicy !== "all-lessons-and-assessments";
+  const complete = completedLessons === lessons.length && allAssessmentsPassed &&
+    (!requiresPassedProjects || allProjectsPassed);
   const existingProgress = await findOwnedPathProgress(userId, pathId);
   const completedAt = complete ? (existingProgress?.completedAt || new Date()) : null;
 

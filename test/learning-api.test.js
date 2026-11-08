@@ -6,6 +6,7 @@ process.env.JWT_SECRET = "learning-api-test-secret-with-at-least-32-characters";
 process.env.CORS_ORIGINS = "http://localhost:5173";
 
 const { app } = require("../server");
+const { recomputePathCompletion } = require("../services/learningProgressService");
 const User = require("../models/user");
 const LearningExercise = require("../models/learningExercise");
 const LearningExerciseAttempt = require("../models/learningExerciseAttempt");
@@ -38,6 +39,7 @@ const quiz = {
     { questionKey: "one", type: "multiple-choice", prompt: "Choose one.", choices: [{ id: "a", text: "A" }, { id: "b", text: "B" }], correctChoiceId: "a", explanation: "A is correct.", solutionCode: "secret" },
     { questionKey: "two", type: "true-false", prompt: "Choose two.", choices: [{ id: "yes", text: "Yes" }, { id: "no", text: "No" }], correctChoiceId: "no", explanation: "No is correct." },
     { questionKey: "three", type: "code-output", prompt: "Choose three.", choices: [{ id: "x", text: "X" }, { id: "y", text: "Y" }], correctChoiceId: "x", explanation: "X is correct." },
+    { questionKey: "four", type: "short-answer", prompt: "Explain the idea.", choices: [], requirements: ["Use your own words."], rubric: ["Explains the idea."], hints: ["Recall the lesson."], explanation: "A clear answer identifies the concept.", solutionCode: "private answer" },
   ],
 };
 
@@ -303,6 +305,7 @@ test("quiz submissions validate shape and save the authenticated student's resul
     { questionKey: "one", choiceId: "a" },
     { questionKey: "two", choiceId: "no" },
     { questionKey: "three", choiceId: "y" },
+    { questionKey: "four", response: "It describes the idea in my own words." },
   ];
   const result = await request(`/api/learning/quizzes/${quizId}/submit`, {
     user: student,
@@ -316,6 +319,9 @@ test("quiz submissions validate shape and save the authenticated student's resul
   assert.equal(lastSavedAttempt.correctCount, 2);
   assert.equal(lastSavedAttempt.questionCount, 3);
   assert.equal(result.body.data.answers[0].correctChoiceId, "a");
+  assert.equal(result.body.data.shortAnswerQuestionCount, 1);
+  assert.equal(result.body.data.answers[3].submitted, true);
+  assert.equal("correct" in result.body.data.answers[3], false);
 });
 
 test("progress queries are scoped to the authenticated student", async () => {
@@ -374,4 +380,243 @@ test("lesson completion is idempotently scoped to the authenticated student", as
   assert.equal(result.body.data.percentage, 50);
   assert.equal(lessonProgressUpdate.filter.user, student._id);
   assert.equal(lessonProgressUpdate.update.$set.completedAt.getTime(), completedAt.getTime());
+});
+
+test("Python Learning Path metadata is retrievable without creating an Instructor Course", async () => {
+  const pythonPath = {
+    _id: pathId,
+    slug: "python-fundamentals",
+    title: "Python Fundamentals",
+    subtitle: "Python 3.11+ for beginners",
+    description: "Learn to write basic Python programs.",
+    subject: "python",
+    trackKey: "fundamentals",
+    trackOrder: 1,
+    prerequisiteSlugs: [],
+    estimatedHours: 42,
+    minimumPythonVersion: "3.11",
+    completionPolicy: "all-lessons-and-assessments",
+  };
+  const originalFindOne = LearningPath.findOne;
+  const originalModuleFind = LearningModule.find;
+  const originalLessonCount = LearningLesson.countDocuments;
+  LearningPath.findOne = () => query(pythonPath);
+  LearningModule.find = () => query([sampleModule]);
+  LearningLesson.countDocuments = async () => 25;
+  try {
+    const result = await request("/api/learning/paths/python-fundamentals");
+    assert.equal(result.response.status, 200);
+    assert.equal(result.body.data.path.subject, "python");
+    assert.equal(result.body.data.path.trackKey, "fundamentals");
+    assert.equal(result.body.data.path.minimumPythonVersion, "3.11");
+    assert.equal(result.body.data.access.allowed, true);
+    assert.equal(result.body.data.lessonCount, 25);
+  } finally {
+    LearningPath.findOne = originalFindOne;
+    LearningModule.find = originalModuleFind;
+    LearningLesson.countDocuments = originalLessonCount;
+  }
+});
+
+test("specialized Python content is locked on deep links and quiz submission until Fundamentals completes", async () => {
+  const fundamentalsId = "000000000000000000000010";
+  const gatedPath = {
+    _id: pathId,
+    slug: "python-web-development",
+    title: "Python Web Development",
+    prerequisiteSlugs: ["python-fundamentals"],
+  };
+  const originalPathFindOne = LearningPath.findOne;
+  const originalPathFind = LearningPath.find;
+  const originalProgressFind = LearningPathProgress.find;
+  const originalModuleById = LearningModule.findById;
+  const originalLessonFind = LearningLesson.find;
+  const originalQuizById = LearningQuiz.findById;
+  let fundamentalsCompleted = false;
+  sampleModule = { _id: moduleId, path: pathId, title: "Web Foundations", slug: "web-foundations", order: 1 };
+  LearningPath.findOne = () => query(gatedPath);
+  LearningPath.find = () => query([{ _id: fundamentalsId, slug: "python-fundamentals" }]);
+  LearningPathProgress.find = (filter) => {
+    assert.equal(filter.user, student._id);
+    return query(fundamentalsCompleted ? [{ path: fundamentalsId }] : []);
+  };
+  LearningModule.findById = () => query(sampleModule);
+  LearningLesson.find = () => query([]);
+  LearningQuiz.findById = async () => ({ ...quiz, path: pathId });
+  try {
+    const anonymousDeepLink = await request(`/api/learning/modules/${moduleId}`);
+    assert.equal(anonymousDeepLink.response.status, 401);
+    assert.equal(anonymousDeepLink.body.code, "STUDENT_AUTHENTICATION_REQUIRED");
+
+    const instructorDeepLink = await request(`/api/learning/modules/${moduleId}`, { user: instructor });
+    assert.equal(instructorDeepLink.response.status, 403);
+
+    const incompleteDeepLink = await request(`/api/learning/modules/${moduleId}`, { user: student });
+    assert.equal(incompleteDeepLink.response.status, 403);
+    assert.equal(incompleteDeepLink.body.code, "LEARNING_PREREQUISITE_REQUIRED");
+    assert.deepEqual(incompleteDeepLink.body.data.incompletePrerequisites, ["python-fundamentals"]);
+
+    const blockedSubmission = await request(`/api/learning/quizzes/${quizId}/submit`, {
+      user: student,
+      method: "POST",
+      body: { answers: [
+        { questionKey: "one", choiceId: "a" },
+        { questionKey: "two", choiceId: "no" },
+        { questionKey: "three", choiceId: "x" },
+      ] },
+    });
+    assert.equal(blockedSubmission.response.status, 403);
+    assert.equal(blockedSubmission.body.code, "LEARNING_PREREQUISITE_REQUIRED");
+
+    fundamentalsCompleted = true;
+    const unlockedDeepLink = await request(`/api/learning/modules/${moduleId}`, { user: student });
+    assert.equal(unlockedDeepLink.response.status, 200);
+    assert.equal(unlockedDeepLink.body.data.module.title, "Web Foundations");
+  } finally {
+    LearningPath.findOne = originalPathFindOne;
+    LearningPath.find = originalPathFind;
+    LearningPathProgress.find = originalProgressFind;
+    LearningModule.findById = originalModuleById;
+    LearningLesson.find = originalLessonFind;
+    LearningQuiz.findById = originalQuizById;
+  }
+});
+
+test("Python exercise solutions are hidden until explicit student self-check request and are never HTML-graded", async () => {
+  const originalPathFindOne = LearningPath.findOne;
+  const originalLessonById = LearningLesson.findById;
+  const originalModuleById = LearningModule.findById;
+  const originalExerciseFindOne = LearningExercise.findOne;
+  const originalExerciseById = LearningExercise.findById;
+  const pythonPath = { _id: pathId, slug: "python-fundamentals", title: "Python Fundamentals", prerequisiteSlugs: [] };
+  sampleModule = { _id: moduleId, path: pathId, title: "Getting Started", slug: "getting-started", order: 1 };
+  sampleLesson = {
+    _id: lessonId,
+    path: pathId,
+    module: moduleId,
+    title: "Run Python Programs",
+    slug: "run-python-programs",
+    order: 1,
+    content: { introduction: "Run a saved Python script.", objectives: ["Run a script.", "Inspect output."] },
+  };
+  sampleExercise = {
+    _id: exerciseId,
+    path: pathId,
+    module: moduleId,
+    lesson: lessonId,
+    title: "Write a greeting",
+    language: "python",
+    instructions: "Write and run the code locally.",
+    starterCode: "print('hello')",
+    selfChecks: ["It prints hello.", "It runs in Python 3.11+."],
+    hints: ["Use print.", "Use quotes around text."],
+    requirements: [],
+    solutionCode: "print('Hello, learner!')",
+    solutionExplanation: "print displays the supplied string.",
+  };
+  LearningPath.findOne = () => query(pythonPath);
+  LearningLesson.findById = () => query(sampleLesson);
+  LearningModule.findById = () => query(sampleModule);
+  LearningExercise.findOne = () => query(sampleExercise);
+  LearningExercise.findById = () => query(sampleExercise);
+  try {
+    const lesson = await request(`/api/learning/lessons/${lessonId}`);
+    assert.equal(lesson.response.status, 200);
+    assert.equal(lesson.body.data.exercise.language, "python");
+    assert.deepEqual(lesson.body.data.exercise.selfChecks, sampleExercise.selfChecks);
+    assert.doesNotMatch(JSON.stringify(lesson.body.data), /solutionCode|solutionExplanation/);
+
+    const anonymousSolution = await request(`/api/learning/exercises/${exerciseId}/reference-solution`, {
+      method: "POST",
+      body: { confirmSelfCheck: true },
+    });
+    assert.equal(anonymousSolution.response.status, 401);
+
+    const unconfirmedSolution = await request(`/api/learning/exercises/${exerciseId}/reference-solution`, {
+      user: student,
+      method: "POST",
+      body: {},
+    });
+    assert.equal(unconfirmedSolution.response.status, 400);
+
+    const revealedSolution = await request(`/api/learning/exercises/${exerciseId}/reference-solution`, {
+      user: student,
+      method: "POST",
+      body: { confirmSelfCheck: true },
+    });
+    assert.equal(revealedSolution.response.status, 200);
+    assert.equal(revealedSolution.body.data.solutionCode, sampleExercise.solutionCode);
+
+    const submittedToHtmlChecker = await request(`/api/learning/exercises/${exerciseId}/submit`, {
+      user: student,
+      method: "POST",
+      body: { html: "print('Hello')" },
+    });
+    assert.equal(submittedToHtmlChecker.response.status, 400);
+    assert.match(submittedToHtmlChecker.body.message, /not submitted to LearnHub/i);
+  } finally {
+    LearningPath.findOne = originalPathFindOne;
+    LearningLesson.findById = originalLessonById;
+    LearningModule.findById = originalModuleById;
+    LearningExercise.findOne = originalExerciseFindOne;
+    LearningExercise.findById = originalExerciseById;
+  }
+});
+
+test("Python path completion requires lessons and assessments but not an unverified project pass", async () => {
+  const secondQuizId = "000000000000000000000011";
+  const projectId = "000000000000000000000012";
+  const originalPathFindOne = LearningPath.findOne;
+  const originalModuleFind = LearningModule.find;
+  const originalLessonFind = LearningLesson.find;
+  const originalLessonCount = LearningLessonProgress.countDocuments;
+  const originalQuizFind = LearningQuiz.find;
+  const originalQuizDistinct = LearningQuizAttempt.distinct;
+  const originalExerciseFind = LearningExercise.find;
+  const originalExerciseDistinct = LearningExerciseAttempt.distinct;
+  const originalProgressFindOne = LearningPathProgress.findOne;
+  const originalProgressUpsert = LearningPathProgress.findOneAndUpdate;
+  let pythonAssessmentPassed = false;
+  let projectPassed = false;
+  let lastProgressUpdate;
+  const module = { _id: moduleId };
+  const requiredQuizzes = [
+    { _id: quizId, scope: "module", module: moduleId },
+    { _id: secondQuizId, scope: "final", module: null },
+  ];
+  LearningPath.findOne = () => query({ completionPolicy: "all-lessons-and-assessments" });
+  LearningModule.find = () => query([module]);
+  LearningLesson.find = () => query([{ _id: lessonId }]);
+  LearningLessonProgress.countDocuments = async () => 1;
+  LearningQuiz.find = () => query(requiredQuizzes);
+  LearningQuizAttempt.distinct = async () => pythonAssessmentPassed ? [quizId, secondQuizId] : [];
+  LearningExercise.find = () => query([{ _id: projectId, project: { description: "self-check project" } }]);
+  LearningExerciseAttempt.distinct = async () => projectPassed ? [projectId] : [];
+  LearningPathProgress.findOne = () => query(null);
+  LearningPathProgress.findOneAndUpdate = async (filter, update) => { lastProgressUpdate = { filter, update }; };
+  try {
+    assert.equal(await recomputePathCompletion(student._id, pathId), false);
+    assert.equal(lastProgressUpdate.update.$set.completedAt, null, "opened/completed lessons alone do not complete the path");
+    pythonAssessmentPassed = true;
+    assert.equal(await recomputePathCompletion(student._id, pathId), true, "Python does not require an online project pass");
+    assert.ok(lastProgressUpdate.update.$set.completedAt instanceof Date);
+
+    LearningPath.findOne = () => query({});
+    pythonAssessmentPassed = true;
+    projectPassed = false;
+    assert.equal(await recomputePathCompletion(student._id, pathId), false, "legacy paths retain the project-pass requirement");
+    projectPassed = true;
+    assert.equal(await recomputePathCompletion(student._id, pathId), true);
+  } finally {
+    LearningPath.findOne = originalPathFindOne;
+    LearningModule.find = originalModuleFind;
+    LearningLesson.find = originalLessonFind;
+    LearningLessonProgress.countDocuments = originalLessonCount;
+    LearningQuiz.find = originalQuizFind;
+    LearningQuizAttempt.distinct = originalQuizDistinct;
+    LearningExercise.find = originalExerciseFind;
+    LearningExerciseAttempt.distinct = originalExerciseDistinct;
+    LearningPathProgress.findOne = originalProgressFindOne;
+    LearningPathProgress.findOneAndUpdate = originalProgressUpsert;
+  }
 });

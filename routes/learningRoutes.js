@@ -40,26 +40,32 @@ function limitSubmissions(req, res, next) {
 const student = [authMiddleware, authorizeRoles("STUDENT")];
 const studentSubmission = [...student, limitSubmissions];
 
-router.get("/paths", learningController.listPaths);
-router.get("/paths/:pathSlug", learningController.getPath);
-router.get("/paths/:pathSlug/modules", learningController.listModules);
+function optionalAuth(req, res, next) {
+  if (!req.headers.authorization) return next();
+  return authMiddleware(req, res, next);
+}
+
+router.get("/paths", optionalAuth, learningController.listPaths);
+router.get("/paths/:pathSlug", optionalAuth, learningController.getPath);
+router.get("/paths/:pathSlug/modules", optionalAuth, learningController.listModules);
 router.get("/paths/:pathSlug/projects", ...student, learningController.getFinalProjects);
-router.get("/paths/:pathSlug/assessment", learningController.getFinalAssessment);
+router.get("/paths/:pathSlug/assessment", optionalAuth, learningController.getFinalAssessment);
 router.get("/bookmarks/me", ...student, learningController.getMyBookmarks);
 
-router.get("/modules/:moduleId", learningController.getModule);
-router.get("/modules/:moduleId/lessons", learningController.listModuleLessons);
-router.get("/modules/:moduleId/assessment", learningController.getModuleAssessment);
+router.get("/modules/:moduleId", optionalAuth, learningController.getModule);
+router.get("/modules/:moduleId/lessons", optionalAuth, learningController.listModuleLessons);
+router.get("/modules/:moduleId/assessment", optionalAuth, learningController.getModuleAssessment);
 
-router.get("/lessons/:lessonId", learningController.getLesson);
-router.get("/lessons/:lessonId/exercises", learningController.listExercises);
-router.get("/lessons/:lessonId/quiz", learningController.getLessonQuiz);
-router.get("/quizzes/:quizId", learningController.getQuiz);
+router.get("/lessons/:lessonId", optionalAuth, learningController.getLesson);
+router.get("/lessons/:lessonId/exercises", optionalAuth, learningController.listExercises);
+router.get("/lessons/:lessonId/quiz", optionalAuth, learningController.getLessonQuiz);
+router.get("/quizzes/:quizId", optionalAuth, learningController.getQuiz);
 router.patch("/lessons/:lessonId/visit", ...student, learningController.markLessonVisited);
 router.post("/lessons/:lessonId/complete", ...student, learningController.markLessonCompleted);
 router.put("/lessons/:lessonId/bookmark", ...student, learningController.setLessonBookmark);
 
 router.post("/exercises/:exerciseId/submit", ...studentSubmission, learningController.submitExercise);
+router.post("/exercises/:exerciseId/reference-solution", ...studentSubmission, learningController.getExerciseReferenceSolution);
 router.post("/quizzes/:quizId/submit", ...studentSubmission, learningController.submitQuiz);
 router.get("/progress/me", ...student, learningController.getMyProgress);
 
