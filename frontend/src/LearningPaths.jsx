@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Bookmark, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Circle, Clock3, GraduationCap, Menu, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react'
+import { Atom, Bookmark, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Circle, Clock3, Code, Database, FileCode, GraduationCap, Menu, Palette, PanelLeftClose, PanelLeftOpen, Server, X } from 'lucide-react'
 import { apiRequest } from './api'
 import './LearningPaths.css'
 
@@ -23,6 +23,28 @@ function routeFromHash() {
 
 function LearningLink({ href, children, className = '', ...props }) {
   return <a className={className} href={`#${href}`} {...props}>{children}</a>
+}
+
+function LearningPathThumbnail({ path }) {
+  const pathName = `${path.title || ''} ${path.slug || ''}`.toLowerCase()
+  const category = /react/.test(pathName) ? 'react'
+    : /javascript|\bjs\b/.test(pathName) ? 'javascript'
+      : /node(?:\.js)?/.test(pathName) ? 'node'
+        : /mongo(?:db)?/.test(pathName) ? 'mongodb'
+          : /css/.test(pathName) ? 'css'
+            : /html/.test(pathName) ? 'html'
+              : 'general'
+  const PathIcon = {
+    html: Code,
+    css: Palette,
+    javascript: FileCode,
+    react: Atom,
+    node: Server,
+    mongodb: Database,
+    general: BookOpen,
+  }[category]
+
+  return <span className={`learning-path-thumbnail is-${category}`} aria-hidden="true"><PathIcon size={30} strokeWidth={1.8} /></span>
 }
 
 function FramePreview({ html }) {
@@ -529,6 +551,7 @@ function LearningPaths({ token, user }) {
           <div className="learning-path-grid">
             {requestState.data?.map((path) => (
               <article className="learning-path-card" key={path._id}>
+                <LearningPathThumbnail path={path} />
                 <p className="eyebrow">{path.language || 'LEARNING PATH'}</p><h2>{path.title}</h2><p>{path.subtitle}</p>
                 <p className="learning-counts">{path.moduleCount} modules <span>·</span> {path.lessonCount} lessons</p>
                 <LearningLink className="button button-dark" href={`${ROOT}/${encodeURIComponent(path.slug)}`}>Explore path <span aria-hidden="true">→</span></LearningLink>

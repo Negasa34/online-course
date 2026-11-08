@@ -73,12 +73,32 @@
   box-shadow: 0 12px 30px rgba(20, 42, 75, 0.045);
 }
 
+.learning-path-thumbnail {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 auto;
+  place-items: center;
+  margin-bottom: 15px;
+  border: 1px solid rgba(227, 79, 38, 0.18);
+  border-radius: 9px;
+  color: #e34f26;
+  background: #fff7ed;
+}
+
+.learning-path-thumbnail.is-css { color: #2563eb; background: #eff6ff; }
+.learning-path-thumbnail.is-javascript { color: #a16207; background: #fef3c7; }
+.learning-path-thumbnail.is-react { color: #0369a1; background: #e0f2fe; }
+.learning-path-thumbnail.is-node { color: #15803d; background: #dcfce7; }
+.learning-path-thumbnail.is-mongodb { color: #166534; background: #ecfdf5; }
+.learning-path-thumbnail.is-general { color: #475569; background: #f1f5f9; border-color: #cbd5e1; }
+
 .learning-path-card h2,
 .learning-module-card h2,
 .learning-module-card h3,
 .learning-project-card h2 {
   margin: 4px 0 10px;
-  color: var(--ink);
+  color: var(--learnhub-navy);
   font: 700 23px/1.2 var(--serif);
 }
 
@@ -340,7 +360,7 @@
   padding: 24px;
   border-color: #cbd5e1;
   border-radius: 8px;
-  background: #fff;
+  background: #f8fafc;
   box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
@@ -351,11 +371,20 @@
 }
 
 .learning-question legend {
+  display: block;
+  float: left;
+  width: 100%;
+  box-sizing: border-box;
   max-width: 100%;
-  padding: 0 8px;
+  margin: 0 0 12px;
+  padding: 0;
   color: #0f172a;
   font-weight: 700;
-  line-height: 1.6;
+  line-height: 1.55;
+}
+
+.learning-question legend + * {
+  clear: both;
 }
 
 .learning-choice {
@@ -368,7 +397,7 @@
   border: 1px solid #cbd5e1;
   border-radius: 7px;
   color: #334155;
-  background: #f8fafc;
+  background: #fff;
   cursor: pointer;
   line-height: 1.55;
   transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
