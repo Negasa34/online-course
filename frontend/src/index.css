@@ -22,6 +22,18 @@
   --walnut: #181d29;
   --surface-deep: #0b1728;
   --serif: 'Manrope', 'Segoe UI', sans-serif;
+  --learnhub-navy: #0f172a;
+  --learnhub-blue: #2563eb;
+  --learnhub-blue-light: #eff6ff;
+  --learnhub-slate: #f1f5f9;
+  --learnhub-reading: #f8fafc;
+  --learnhub-surface: #fff;
+  --learnhub-text: #1e293b;
+  --learnhub-secondary: #64748b;
+  --learnhub-reading-secondary: #475569;
+  --learnhub-border: #cbd5e1;
+  --learnhub-success: #16a34a;
+  --learnhub-warning: #f59e0b;
 }
 
 * {

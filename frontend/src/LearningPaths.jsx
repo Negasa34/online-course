@@ -583,6 +583,17 @@ function LearningPaths({ token, user }) {
       {(route.page === 'quiz' || route.page === 'final-assessment') && statePanel(requestState.data && (
         <section className="learning-quiz">
           <header className="learning-page-heading"><p className="eyebrow">{requestState.data.scope} ASSESSMENT</p><h1>{requestState.data.title}</h1><p>Choose an answer for each question. Practical responses are submitted for your review and do not affect the automatically scored percentage.</p></header>
+          {(() => {
+            const questionCount = requestState.data.questions.length
+            const answeredCount = requestState.data.questions.filter((question) => Boolean(answers[question.questionKey]?.trim())).length
+            const completion = questionCount ? Math.round((answeredCount / questionCount) * 100) : 0
+            return (
+              <div className="learning-assessment-progress" role="progressbar" aria-label="Assessment completion" aria-valuenow={completion} aria-valuemin="0" aria-valuemax="100">
+                <div><span>Assessment progress</span><strong>{answeredCount} of {questionCount} answered</strong></div>
+                <span className="learning-assessment-track"><span style={{ width: `${completion}%` }} /></span>
+              </div>
+            )
+          })()}
           {requestState.data.questions.map((question, index) => (
             <fieldset className="learning-question" key={question.questionKey}>
               <legend>{index + 1}. {question.prompt}</legend>
@@ -595,7 +606,7 @@ function LearningPaths({ token, user }) {
             </fieldset>
           ))}
           <button className="button button-dark" disabled={submitting} onClick={() => submitQuiz(requestState.data)}>{submitting ? 'Submitting…' : 'Submit assessment'}</button>
-          {submission && <div className="learning-result" role="status"><h2>{submission.message}</h2>{submission.data?.score !== undefined && <p>Score: {submission.data.correctCount}/{submission.data.questionCount} ({submission.data.score}%) · {submission.data.passed ? 'Passed' : 'Not passed yet'}</p>}{submission.data?.practicalReview && <p>{submission.data.practicalReview}</p>}{submission.data?.answers?.map((answer) => <p key={answer.questionKey}>{answer.questionKey}: {answer.correct ? 'Correct' : answer.submitted ? 'Submitted for review' : 'Incorrect'}{answer.explanation ? ` — ${answer.explanation}` : ''}</p>)}</div>}
+          {submission && <div className="learning-result" role="status"><h2>{submission.message}</h2>{submission.data?.score !== undefined && <p className={`learning-score${submission.data.passed ? ' is-passed' : ' is-failed'}`}>Score: {submission.data.correctCount}/{submission.data.questionCount} ({submission.data.score}%) · {submission.data.passed ? 'Passed' : 'Not passed yet'}</p>}{submission.data?.practicalReview && <p>{submission.data.practicalReview}</p>}{submission.data?.answers?.map((answer) => <p className={`learning-answer-feedback${answer.correct ? ' is-correct' : answer.submitted ? ' is-submitted' : ' is-incorrect'}`} key={answer.questionKey}>{answer.questionKey}: {answer.correct ? 'Correct' : answer.submitted ? 'Submitted for review' : 'Incorrect'}{answer.explanation ? ` — ${answer.explanation}` : ''}</p>)}</div>}
         </section>
       ))}
       {route.page === 'progress' && statePanel(requestState.data && (

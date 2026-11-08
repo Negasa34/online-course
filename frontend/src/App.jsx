@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Atom, BookOpen, Code, Database, FileCode, Palette, Server } from 'lucide-react'
 import './App.css'
 import { InstructorCourseBuilder, StudentLearning } from './CourseContent'
 import LearningPaths from './LearningPaths'
@@ -358,11 +359,37 @@ function Header({ user, onLogout, page, searchValue, onSearch, onSearchSubmit })
 
 function CourseCard({ course }) {
   const id = courseId(course)
+  const [failedImage, setFailedImage] = useState('')
+  const courseName = `${course.title || ''} ${course.slug || ''}`.toLowerCase()
+  const category = /react/.test(courseName) ? 'react'
+    : /javascript|\bjs\b/.test(courseName) ? 'javascript'
+      : /node(?:\.js)?/.test(courseName) ? 'node'
+        : /mongo(?:db)?/.test(courseName) ? 'mongodb'
+          : /css/.test(courseName) ? 'css'
+            : /html/.test(courseName) ? 'html'
+              : 'general'
+  const CourseIcon = {
+    html: Code,
+    css: Palette,
+    javascript: FileCode,
+    react: Atom,
+    node: Server,
+    mongodb: Database,
+    general: BookOpen,
+  }[category]
+  const image = course.imageUrl || course.image || course.thumbnail || course.coverImage
+  const showImage = typeof image === 'string' && image.trim() && image !== failedImage
+
   return (
     <article className="course-card">
       <div className="course-card-top">
         <span className="course-label">LEARNHUB COURSE</span>
         <span className="course-price">{formatPrice(course.price)}</span>
+      </div>
+      <div className={`course-card-art is-${category}`} aria-hidden={!showImage}>
+        {showImage
+          ? <img src={image} alt={`Course cover for ${course.title}`} onError={() => setFailedImage(image)} />
+          : <CourseIcon size={25} strokeWidth={1.8} aria-hidden="true" />}
       </div>
       <h3>{course.title}</h3>
       <p>{course.description}</p>
