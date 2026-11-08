@@ -16,8 +16,10 @@ const userRoutes = require("./routes/userRoutes");
 const instructorApplicationRoutes = require("./routes/instructorApplicationRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
+const learningRoutes = require("./routes/learningRoutes");
 const Enrollment = require("./models/enrollment");
 const InstructorApplication = require("./models/instructorApplication");
+const LearningLessonBookmark = require("./models/learningLessonBookmark");
 const authMiddleware = require("./middleware/authMiddleware");
 const authorizeRoles = require("./middleware/authorizeRoles");
 const canManageCourse = require("./middleware/canManageCourse");
@@ -66,6 +68,7 @@ app.use("/api/instructor-applications", instructorApplicationRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/dashboards", dashboardRoutes);
 app.use("/api/curriculum", curriculumRoutes);
+app.use("/api/learning", learningRoutes);
 
 // MongoDB connection status
 app.get("/api/health", (req, res) => {
@@ -393,6 +396,7 @@ async function startServer() {
     await Promise.all([
       Enrollment.createIndexes(),
       InstructorApplication.createIndexes(),
+      LearningLessonBookmark.createIndexes(),
       CourseSection.createIndexes(),
       LessonProgress.createIndexes(),
     ]);

@@ -107,7 +107,7 @@ router.patch("/instructor-applications/:id", async (req, res) => {
           reviewNote: reviewNote.trim(),
         },
       },
-      { new: true, runValidators: true }
+      { returnDocument: "after", runValidators: true }
     );
     if (!reviewedApplication) {
       return res.status(409).json({ success: false, message: "This application has already been reviewed" });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { InstructorCourseBuilder, StudentLearning } from './CourseContent'
+import LearningPaths from './LearningPaths'
 
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/$/, '')
 const TOKEN_KEY = 'learnhub_token'
@@ -55,6 +56,7 @@ function formatPrice(price) {
 
 function routeFromHash() {
   const path = window.location.hash.slice(1) || '/'
+  if (/^\/learning-paths(?:\/|$)/.test(path)) return { page: 'learning' }
   const courseMatch = path.match(/^\/courses\/([^/]+)$/)
   if (courseMatch) return { page: 'course', id: decodeURIComponent(courseMatch[1]) }
   const curriculumMatch = path.match(/^\/curriculum\/([^/]+)$/)
@@ -260,6 +262,7 @@ function Header({ user, onLogout, page, searchValue, onSearch, onSearchSubmit })
         <nav className={`main-nav${menuOpen ? ' is-open' : ''}`} id="primary-navigation" aria-label="Main navigation">
           <a href="#/" aria-current={page === 'home' ? 'page' : undefined}>Home</a>
           <a href="#/courses" aria-current={page === 'courses' || page === 'course' ? 'page' : undefined}>Courses</a>
+          <a href="#/learning-paths" aria-current={page === 'learning' ? 'page' : undefined}>Learning Paths</a>
           <a href="#/about" aria-current={page === 'about' ? 'page' : undefined}>About</a>
           <a href="#/contact" aria-current={page === 'contact' ? 'page' : undefined}>Contact</a>
         </nav>
@@ -1477,6 +1480,7 @@ function Footer({ user }) {
         <nav className="footer-column" aria-label="Explore">
           <h2>Explore</h2>
           <a href="#/courses">All courses</a>
+          <a href="#/learning-paths">Learning Paths</a>
           <p className="footer-note">Browse the published course catalog. Topic categories aren’t provided by the current course data.</p>
         </nav>
         <nav className="footer-column" aria-label="Platform">
@@ -1660,13 +1664,14 @@ function App() {
 
   const roleRoute = !authLoading ? resolveRoleRoute(route.page, user) : { page: route.page }
   const page = roleRoute.page
+  const isLearningLessonPage = page === 'learning' && /^#\/learning-paths\/lessons\//.test(window.location.hash)
   if (roleRoute.redirect && window.location.hash !== `#${roleRoute.redirect}`) navigate(roleRoute.redirect)
 
   if (authLoading) return <div className="app-loading" role="status"><span className="spinner" /> Restoring your session…</div>
 
   return (
-    <div className="app-shell">
-      <Header
+    <div className={`app-shell${isLearningLessonPage ? ' lesson-app-shell' : ''}`}>
+      {!isLearningLessonPage && <Header
         user={user}
         onLogout={logout}
         page={page}
@@ -1676,8 +1681,8 @@ function App() {
           setCourseSearch(value)
           if (page !== 'courses') navigate('/courses')
         }}
-      />
-      {authError && user && <div className="session-alert" role="status">{authError}</div>}
+      />}
+      {!isLearningLessonPage && authError && user && <div className="session-alert" role="status">{authError}</div>}
       {page === 'home' && <HomePage courses={allCourses} loading={courseState.loading} error={courseState.error} onRetry={loadCourses} />}
       {page === 'courses' && <CatalogPage courses={allCourses.filter((course) => course.published)} loading={courseState.loading} error={courseState.error} onRetry={loadCourses} search={courseSearch} onSearch={setCourseSearch} />}
       {page === 'about' && <AboutPage />}
@@ -1692,8 +1697,9 @@ function App() {
       {page === 'course' && <CourseDetail key={route.id} id={route.id} token={token} user={user} />}
       {page === 'curriculum' && user && <InstructorCourseBuilder key={route.courseId} courseId={route.courseId} token={token} />}
       {page === 'learn' && <StudentLearning key={`${route.courseId}:${route.lessonId}`} courseId={route.courseId} lessonId={route.lessonId} token={token} />}
-      {!['home', 'courses', 'about', 'contact', 'login', 'register', 'instructor-apply', 'dashboard', 'my-courses', 'profile', 'settings', 'admin', 'course', 'curriculum', 'learn'].includes(page) && <main className="page-main"><div className="state-card"><strong>That page isn’t here.</strong><a className="text-link" href="#/">Back to home →</a></div></main>}
-      <Footer user={user} />
+      {page === 'learning' && <LearningPaths key={window.location.hash} token={token} user={user} />}
+      {!['home', 'courses', 'about', 'contact', 'login', 'register', 'instructor-apply', 'dashboard', 'my-courses', 'profile', 'settings', 'admin', 'course', 'curriculum', 'learn', 'learning'].includes(page) && <main className="page-main"><div className="state-card"><strong>That page isn’t here.</strong><a className="text-link" href="#/">Back to home →</a></div></main>}
+      {!isLearningLessonPage && <Footer user={user} />}
     </div>
   )
 }

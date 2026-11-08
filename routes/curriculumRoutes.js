@@ -664,7 +664,7 @@ router.post(
           $set: { section: found.section._id, lastViewedAt: new Date() },
           $setOnInsert: { completed: false },
         },
-        { new: true, upsert: true, runValidators: true }
+        { returnDocument: "after", upsert: true, runValidators: true }
       );
       return res.status(200).json({ success: true, data: progress });
     } catch (error) {
@@ -692,7 +692,7 @@ router.post(
             lastViewedAt: now,
           },
         },
-        { new: true, upsert: true, runValidators: true }
+        { returnDocument: "after", upsert: true, runValidators: true }
       );
       return res.status(200).json({ success: true, message: "Lesson marked complete", data: progress });
     } catch (error) {

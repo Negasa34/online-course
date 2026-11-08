@@ -47,7 +47,7 @@ async function seedDatabase() {
         { $setOnInsert: courseData },
         {
           upsert: true,
-          new: true,
+          returnDocument: "after",
           setDefaultsOnInsert: true,
         }
       );
